@@ -7,23 +7,21 @@ const {
   analyzePost,
   getHapBilgi,
   analyzeUserInterests,
-  analyzeImageOnly
+  analyzeImageOnly,
+  testSystemStatus
 } = require('../controllers/aiController');
 const { improvePromptFrontend, PROMPT_IMPROVEMENT_RULES } = require('../services/geminiService');
 
-// POST /api/ai/question - AI ile soru sor (eski versiyon - yavaş)
 router.post('/question', protect, askAI);
 
-// POST /api/ai/ask-with-options - AI ile soru sor (yeni versiyon - hızlı)
 router.post('/ask-with-options', protect, askAIWithOptions);
 
-// POST /api/ai/improve-prompt - Frontend için prompt iyileştirme
 router.post('/improve-prompt', (req, res) => {
   try {
     const { prompt } = req.body;
     
     if (!prompt || prompt.trim() === '') {
-      return res.status(400).json({ error: 'Prompt boş olamaz.' });
+      return res.status(400).json({ error: 'Prompt cannot be empty.' });
     }
 
     const improvedPrompt = improvePromptFrontend(prompt);
@@ -34,28 +32,23 @@ router.post('/improve-prompt', (req, res) => {
       rules: PROMPT_IMPROVEMENT_RULES
     });
   } catch (error) {
-    console.error('Prompt iyileştirme hatası:', error);
-    res.status(500).json({ error: 'Prompt iyileştirme sırasında hata oluştu.' });
+    console.error('Prompt improvement error:', error);
+    res.status(500).json({ error: 'Error occurred during prompt improvement.' });
   }
 });
 
-// POST /api/ai/analyze-image - Sadece görsel analizi
 router.post('/analyze-image', protect, analyzeImageOnly);
 
-// POST /api/ai/analyze-post/:postId - Post analizi
 router.post('/analyze-post/:postId', protect, analyzePost);
 
-// POST /api/ai/hap-bilgi - Hap bilgi önerisi
 router.post('/hap-bilgi', protect, getHapBilgi);
 
-// POST /api/ai/user-analysis - Kullanıcı analizi
 router.post('/user-analysis', protect, analyzeUserInterests);
 
-// GET /api/ai/test - AI test endpoint
 router.get('/test', (req, res) => {
   res.json({
     success: true,
-    message: 'AI routes çalışıyor!',
+    message: 'AI routes are working!',
     endpoints: [
       'POST /api/ai/question',
       'POST /api/ai/ask-with-options',
@@ -64,5 +57,7 @@ router.get('/test', (req, res) => {
     timestamp: new Date()
   });
 });
+
+router.get('/system-status', testSystemStatus);
 
 module.exports = router;

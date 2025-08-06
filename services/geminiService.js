@@ -4,10 +4,40 @@ require('dotenv').config();
 const API_KEY = process.env.GEMINI_API_KEY;
 const BASE_URL = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`;
 
-// Görsel cache'i (performans için)
+const TIMEOUT = 30000;
+
+const retryRequest = async (requestFn, maxRetries = 5) => {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`API Attempt ${attempt}/${maxRetries}`);
+      return await requestFn();
+    } catch (error) {
+      console.error(`API Attempt ${attempt}/${maxRetries} failed:`, error.message);
+      
+      if (attempt === maxRetries) {
+        console.error('All retry attempts failed');
+        throw error;
+      }
+      
+      if (error.code === 'ECONNRESET' || 
+          error.message.includes('socket hang up') ||
+          error.code === 'ECONNABORTED' ||
+          error.code === 'ETIMEDOUT') {
+        
+        const waitTime = attempt * 2000;
+        console.log(`Waiting ${waitTime/1000} seconds before retry ${attempt + 1}...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      
+      console.log('Waiting 1 second before retry...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+};
+
 const imageCache = new Map();
 
-// Frontend için prompt iyileştirme kuralları
 const PROMPT_IMPROVEMENT_RULES = {
   // Matematik soruları için
   math: {
@@ -51,7 +81,6 @@ const PROMPT_IMPROVEMENT_RULES = {
   }
 };
 
-// Frontend'de kullanılacak prompt iyileştirme fonksiyonu
 function improvePromptFrontend(userPrompt) {
   let improvedPrompt = userPrompt.trim();
   
@@ -79,7 +108,6 @@ function improvePromptFrontend(userPrompt) {
   return improvedPrompt;
 }
 
-// Konu tespiti fonksiyonu
 function detectSubject(prompt) {
   const lowerPrompt = prompt.toLowerCase();
   
@@ -92,48 +120,40 @@ function detectSubject(prompt) {
   return 'general';
 }
 
-// Görsel URL'den base64'e çevirme (cache ile)
 async function getImageData(imageURL) {
   try {
-    // Cache'de varsa direkt döndür
     if (imageCache.has(imageURL)) {
       return imageCache.get(imageURL);
     }
 
-    // Eğer zaten base64 ise direkt döndür
     if (imageURL.startsWith('data:image')) {
       imageCache.set(imageURL, imageURL);
       return imageURL;
     }
     
-    // URL'den görseli indir ve base64'e çevir
     const response = await axios.get(imageURL, { 
       responseType: 'arraybuffer',
-              timeout: 60000 // 60 saniye timeout
+      timeout: 60000
     });
     const buffer = Buffer.from(response.data, 'binary');
     const base64 = buffer.toString('base64');
     
-    // MIME type'ı belirle
     const mimeType = response.headers['content-type'] || 'image/jpeg';
     const result = `data:${mimeType};base64,${base64}`;
     
-    // Cache'e kaydet
     imageCache.set(imageURL, result);
     
     return result;
   } catch (error) {
-    console.error('Görsel işleme hatası:', error);
+    console.error('Image processing error:', error);
     return null;
   }
 }
 
-// Hızlı AI yanıtı (tek API çağrısı)
 async function getFastAIResponse(prompt, responseType, imageURL = null) {
   try {
-    // API key kontrolü
     if (!API_KEY) {
-      throw new Error('Gemini API anahtarı bulunamadı. Lütfen GEMINI_API_KEY environment variable\'ını kontrol edin.');
+      throw new Error('API key not found. Please check GEMINI_API_KEY environment variable.');
     }
 
     const parts = [
@@ -141,18 +161,7 @@ async function getFastAIResponse(prompt, responseType, imageURL = null) {
         text: `Bir öğrenci şu şekilde bir soru sordu:
 "${prompt}"
 
-${responseType === 'step-by-step' ? 
-`Sen bu soruya DOĞRUDAN CEVAP VERME. Bunun yerine:
-
-1. **Soruyu Analiz Et**: Hangi konuları içeriyor? Hangi formülleri/teoremleri kullanabiliriz?
-2. **Düşünme Yolu Göster**: Bu soruyu nasıl yaklaşmalıyız? Hangi adımları takip etmeliyiz?
-3. **İpuçları Ver**: Öğrencinin kendi başına çözebilmesi için yönlendirici ipuçları ver
-4. **Kontrol Noktaları**: Çözüm sırasında hangi noktalara dikkat etmeli?
-5. **Benzer Sorular**: Bu tür soruları çözmek için genel stratejiler
-
-Öğrencinin kendi başına düşünmesini ve çözmesini sağla. Sadece rehberlik et.` :
-
-`Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:
+Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:
 
 1. **Çözüm Adımları**: Her adımı açıkla
 2. **Formüller/Teoremler**: Kullanılan formülleri açıkla
@@ -160,7 +169,7 @@ ${responseType === 'step-by-step' ?
 4. **Alternatif Yöntemler**: Varsa alternatif çözüm yolları
 5. **Kontrol**: Cevabın doğruluğunu nasıl kontrol edebiliriz?
 
-Öğrencinin tam olarak anlayabilmesi için her detayı açıkla.`}`
+Öğrencinin tam olarak anlayabilmesi için her detayı açıkla.`
       }
     ];
 
@@ -186,7 +195,7 @@ ${responseType === 'step-by-step' ?
     };
 
     const response = await axios.post(BASE_URL, data, {
-              timeout: 60000, // 60 saniye timeout
+      timeout: 60000, // 60 saniye timeout
       headers: {
         'Content-Type': 'application/json',
         'Connection': 'keep-alive'
@@ -238,7 +247,7 @@ async function optimizePrompt(userPrompt, imageURL = null) {
   try {
     // API key kontrolü
     if (!API_KEY) {
-      throw new Error('Gemini API anahtarı bulunamadı.');
+      throw new Error('API key not found.');
     }
 
     const parts = [
@@ -274,110 +283,21 @@ async function optimizePrompt(userPrompt, imageURL = null) {
     });
 
     if (!response.data || !response.data.candidates || !response.data.candidates[0]) {
-      throw new Error('Gemini API\'den geçersiz yanıt alındı.');
+      throw new Error('Invalid response from API.');
     }
 
     return response.data.candidates[0].content.parts[0].text;
 
   } catch (error) {
-    console.error('Prompt iyileştirme hatası:', error.message);
-    throw new Error('AI servisi şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.');
+    console.error('Prompt optimization error:', error.message);
+    throw new Error('Service is currently unavailable. Please try again later.');
   }
 }
 
-// Adım Adım Rehberlik (görsel ile) - Eski versiyon
-async function getStepByStepGuidance(prompt, imageURL = null) {
-  const parts = [
-    {
-      text: `Bir öğrenci şu şekilde bir soru sordu:
-"${prompt}"
-
-Sen bu soruya DOĞRUDAN CEVAP VERME. Bunun yerine:
-
-1. **Soruyu Analiz Et**: Hangi konuları içeriyor? Hangi formülleri/teoremleri kullanabiliriz?
-2. **Düşünme Yolu Göster**: Bu soruyu nasıl yaklaşmalıyız? Hangi adımları takip etmeliyiz?
-3. **İpuçları Ver**: Öğrencinin kendi başına çözebilmesi için yönlendirici ipuçları ver
-4. **Kontrol Noktaları**: Çözüm sırasında hangi noktalara dikkat etmeli?
-5. **Benzer Sorular**: Bu tür soruları çözmek için genel stratejiler
-
-Öğrencinin kendi başına düşünmesini ve çözmesini sağla. Sadece rehberlik et.`
-    }
-  ];
-
-  // Eğer görsel varsa ekle
-  if (imageURL) {
-    const imageData = await getImageData(imageURL);
-    if (imageData) {
-      parts.push({
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: imageData.split(',')[1] // base64 kısmını al
-        }
-      });
-    }
-  }
-
-  const data = {
-    contents: [
-      {
-        parts: parts
-      }
-    ]
-  };
-
-  const response = await axios.post(BASE_URL, data);
-  return response.data.candidates[0].content.parts[0].text;
-}
-
-// Direkt Çözüm (görsel ile) - Eski versiyon
-async function getDirectSolution(prompt, imageURL = null) {
-  const parts = [
-    {
-      text: `Bir öğrenci şu şekilde bir soru sordu:
-"${prompt}"
-
-Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:
-
-1. **Çözüm Adımları**: Her adımı açıkla
-2. **Formüller/Teoremler**: Kullanılan formülleri açıkla
-3. **Neden Bu Yöntem**: Neden bu yaklaşımı seçtik?
-4. **Alternatif Yöntemler**: Varsa alternatif çözüm yolları
-5. **Kontrol**: Cevabın doğruluğunu nasıl kontrol edebiliriz?
-
-Öğrencinin tam olarak anlayabilmesi için her detayı açıkla.`
-    }
-  ];
-
-  // Eğer görsel varsa ekle
-  if (imageURL) {
-    const imageData = await getImageData(imageURL);
-    if (imageData) {
-      parts.push({
-        inlineData: {
-          mimeType: "image/jpeg",
-          data: imageData.split(',')[1] // base64 kısmını al
-        }
-      });
-    }
-  }
-
-  const data = {
-    contents: [
-      {
-        parts: parts
-      }
-    ]
-  };
-
-  const response = await axios.post(BASE_URL, data);
-  return response.data.candidates[0].content.parts[0].text;
-}
-
-// Görsel Analizi (sadece görsel için)
 async function analyzeImage(imageURL, analysisType = 'general') {
   const imageData = await getImageData(imageURL);
   if (!imageData) {
-    throw new Error('Görsel işlenemedi');
+    throw new Error('Image could not be processed');
   }
 
   let promptText = '';
@@ -438,18 +358,15 @@ async function analyzeImage(imageURL, analysisType = 'general') {
   return response.data.candidates[0].content.parts[0].text;
 }
 
-// Eski mentor response fonksiyonu (geriye uyumluluk için)
 async function getMentorResponse(prompt, imageURL = null) {
-  return await getStepByStepGuidance(prompt, imageURL);
+  return await getFastAIResponse(prompt, 'direct', imageURL);
 }
 
 module.exports = {
   optimizePrompt,
-  getStepByStepGuidance,
-  getDirectSolution,
   getMentorResponse,
   analyzeImage,
-  getFastAIResponse, // Yeni hızlı fonksiyon
-  improvePromptFrontend, // Frontend için prompt iyileştirme
-  PROMPT_IMPROVEMENT_RULES // Frontend'de kullanılacak kurallar
+  getFastAIResponse,
+  improvePromptFrontend,
+  PROMPT_IMPROVEMENT_RULES
 };

@@ -91,11 +91,6 @@ const postSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  aiResponseType: {
-    type: String,
-    enum: ['step-by-step', 'direct-solution'],
-    default: null
-  },
   difficulty: {
     type: String,
     enum: ['kolay', 'orta', 'zor'],
@@ -149,5 +144,12 @@ postSchema.index({ 'hapBilgiAnalysis.detectedCategory': 1 });
 postSchema.index({ createdAt: -1 }); // Feed sıralaması için
 postSchema.index({ likes: -1, createdAt: -1 }); // Compound index - popülerlik + tarih
 postSchema.index({ commentCount: -1, createdAt: -1 }); // Compound index - yorum sayısı + tarih
+postSchema.index({ _id: 1, isModerated: 1 }); // Latest post kontrolü için optimize
+
+// Search için gerekli index'ler
+postSchema.index({ content: 'text', caption: 'text' }); // Text search için
+postSchema.index({ topicTags: 1, isModerated: 1 }); // Tag search için
+postSchema.index({ difficulty: 1, isModerated: 1 }); // Difficulty filter için
+postSchema.index({ 'hapBilgiAnalysis.detectedCategory': 1, isModerated: 1 }); // Category filter için
 
 module.exports = mongoose.model('Post', postSchema); 

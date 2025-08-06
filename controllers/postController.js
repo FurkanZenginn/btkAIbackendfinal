@@ -381,6 +381,122 @@ const getPostHapBilgi = async (req, res) => {
   }
 };
 
+// GET /api/posts/search - Post arama (etiketlere göre filtreleme)
+const searchPosts = async (req, res) => {
+  try {
+    const { q, tags, category, difficulty, page = 1, limit = 10 } = req.query;
+    
+    console.log('🔍 Search posts:', { q, tags, category, difficulty, page, limit });
+    
+    // Arama sorgusu oluştur
+    let searchQuery = { isModerated: true };
+    
+    // Metin araması
+    if (q && q.trim()) {
+      searchQuery.$or = [
+        { content: { $regex: q, $options: 'i' } },
+        { caption: { $regex: q, $options: 'i' } }
+      ];
+    }
+    
+    // Etiket filtreleme
+    if (tags) {
+      const tagArray = tags.split(',').map(tag => tag.trim());
+      searchQuery.topicTags = { $in: tagArray };
+    }
+    
+    // Kategori filtreleme (hap bilgi analizi üzerinden)
+    if (category) {
+      searchQuery['hapBilgiAnalysis.detectedCategory'] = category;
+    }
+    
+    // Zorluk seviyesi filtreleme
+    if (difficulty) {
+      searchQuery.difficulty = difficulty;
+    }
+    
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    
+    // Postları bul
+    const posts = await Post.find(searchQuery)
+      .populate('userId', 'name avatar')
+      .populate('hapBilgiAnalysis.relatedHapBilgiler.hapBilgiId', 'topic title content category difficulty tags')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    
+    // Toplam sayı
+    const total = await Post.countDocuments(searchQuery);
+    
+    // Popüler etiketleri getir
+    const popularTags = await Post.aggregate([
+      { $match: { isModerated: true } },
+      { $unwind: '$topicTags' },
+      { $group: { _id: '$topicTags', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 }
+    ]);
+    
+    res.json({
+      success: true,
+      data: {
+        posts,
+        totalPages: Math.ceil(total / parseInt(limit)),
+        currentPage: parseInt(page),
+        total,
+        popularTags: popularTags.map(tag => ({ name: tag._id, count: tag.count }))
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Search posts error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Arama sırasında hata oluştu'
+    });
+  }
+};
+
+// GET /api/posts/popular-tags - Popüler etiketleri getir
+const getPopularTags = async (req, res) => {
+  try {
+    const { limit = 20 } = req.query;
+    
+    console.log('🏷️ Get popular tags:', { limit });
+    
+    // Popüler etiketleri getir
+    const popularTags = await Post.aggregate([
+      { $match: { isModerated: true } },
+      { $unwind: '$topicTags' },
+      { $group: { _id: '$topicTags', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: parseInt(limit) }
+    ]);
+    
+    // Kategorileri de getir
+    const categories = await Post.aggregate([
+      { $match: { isModerated: true, 'hapBilgiAnalysis.detectedCategory': { $exists: true } } },
+      { $group: { _id: '$hapBilgiAnalysis.detectedCategory', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+    
+    res.json({
+      success: true,
+      data: {
+        tags: popularTags.map(tag => ({ name: tag._id, count: tag.count })),
+        categories: categories.map(cat => ({ name: cat._id, count: cat.count }))
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Get popular tags error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Etiketler yüklenirken hata oluştu'
+    });
+  }
+};
+
 module.exports = {
   createPost,
   getPosts,
@@ -388,5 +504,7 @@ module.exports = {
   getPost,
   toggleLike,
   deletePost,
-  getPostHapBilgi
+  getPostHapBilgi,
+  searchPosts,
+  getPopularTags
 }; 

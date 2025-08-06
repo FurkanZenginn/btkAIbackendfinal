@@ -13,7 +13,8 @@ const POINT_RULES = {
   daily_streak: GAMIFICATION.POINTS.DAILY_STREAK,
   learning_progress: GAMIFICATION.POINTS.LEARNING_PROGRESS,
   assessment_completed: GAMIFICATION.POINTS.ASSESSMENT_COMPLETED,
-  follow_user: GAMIFICATION.POINTS.FOLLOW_USER
+  follow_user: GAMIFICATION.POINTS.FOLLOW_USER,
+  unfollow_user: 0 // Unfollow için puan yok
 };
 
 // Geçerli feedback tipleri
@@ -25,6 +26,7 @@ const validTypes = [
   'ai_used',
   'helpful_answer',
   'follow_user',
+  'unfollow_user',
   'daily_login',
   'streak_milestone'
 ];
@@ -84,7 +86,22 @@ const xpToNextLevel = (xp) => {
 // Puan ekle ve seviye kontrolü
 const addPoints = async (userId, type, description, metadata = {}) => {
   try {
-    console.log('🎮 addPoints çağrıldı:', { userId, type, description });
+    // Description için fallback değerler
+    const descriptions = {
+      'follow_user': 'Kullanıcı takip etme',
+      'unfollow_user': 'Kullanıcı takibi bırakma',
+      'create_post': 'Gönderi oluşturma',
+      'like_post': 'Gönderi beğenme',
+      'comment_post': 'Yorum ekleme',
+      'ai_interaction': 'AI ile etkileşim',
+      'daily_login': 'Günlük giriş',
+      'streak_milestone': 'Seri başarısı'
+    };
+    
+    // Description yoksa fallback kullan
+    const finalDescription = description || descriptions[type] || 'Genel aktivite';
+    
+    console.log('🎮 addPoints çağrıldı:', { userId, type, description: finalDescription });
     
     // Enum değerlerini kontrol et
     if (!validTypes.includes(type)) {
@@ -138,7 +155,7 @@ const addPoints = async (userId, type, description, metadata = {}) => {
       userId,
       type,
       points,
-      description,
+      description: finalDescription,
       metadata
     });
     await feedback.save();

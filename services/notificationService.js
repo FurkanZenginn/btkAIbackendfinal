@@ -123,6 +123,34 @@ const notifyMention = async (postId, commentId, senderId, recipientId) => {
   return notification;
 };
 
+// Follow bildirimi
+const notifyFollow = async (senderId, recipientId) => {
+  const notification = await createNotification({
+    recipientId,
+    senderId,
+    type: 'follow',
+    title: 'Yeni Takipçi',
+    message: 'Seni takip etmeye başladı!',
+    metadata: { action: 'follow' }
+  });
+
+  return notification;
+};
+
+// Unfollow bildirimi (opsiyonel - genelde gönderilmez)
+const notifyUnfollow = async (senderId, recipientId) => {
+  const notification = await createNotification({
+    recipientId,
+    senderId,
+    type: 'unfollow',
+    title: 'Takipçi Kaybı',
+    message: 'Seni takip etmeyi bıraktı',
+    metadata: { action: 'unfollow' }
+  });
+
+  return notification;
+};
+
 // Kullanıcının bildirimlerini getir
 const getUserNotifications = async (userId, page = 1, limit = 20) => {
   try {
@@ -197,6 +225,8 @@ module.exports = {
   notifyBadgeEarned,
   notifyLevelUp,
   notifyMention,
+  notifyFollow,
+  notifyUnfollow,
   getUserNotifications,
   markAsRead,
   markAllAsRead

@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Post = require('../models/Post');
 const { addPoints } = require('../services/gamificationService');
+const { notifyFollow } = require('../services/notificationService');
 const { asyncHandler, sendSuccess, sendError } = require('../middleware/errorHandler');
 const { NotFoundError, ValidationError } = require('../utils/AppError');
 
@@ -42,8 +43,8 @@ const getProfile = asyncHandler(async (req, res) => {
         aiInteractions: user.stats?.aiInteractions || 0,
         points: user.xp, // Stats içinde de points
         level: user.level, // Stats içinde de level
-        followersCount: user.followers?.length || 0,
-        followingCount: user.following?.length || 0
+        followersCount: user.followersCount || 0, // Virtual field kullan
+        followingCount: user.followingCount || 0  // Virtual field kullan
       }
     }
   });
@@ -234,7 +235,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   }
 });
 
-// POST /api/user/follow/:userId - Kullanıcı takip et
+// POST /api/user/follow/:userId - Kullanıcı takip et/bırak (toggle)
 const followUser = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -250,10 +251,11 @@ const followUser = async (req, res) => {
       });
     }
 
-    const userToFollow = await User.findById(userId);
+    // Her iki kullanıcıyı da bul
     const follower = await User.findById(followerId);
+    const userToFollow = await User.findById(userId);
 
-    if (!userToFollow || !follower) {
+    if (!follower || !userToFollow) {
       return res.status(404).json({
         success: false,
         error: 'Kullanıcı bulunamadı.'
@@ -261,30 +263,63 @@ const followUser = async (req, res) => {
     }
 
     // Zaten takip ediliyor mu kontrol et
-    const isAlreadyFollowing = follower.following.includes(userId);
+    const isFollowing = follower.following.includes(userId);
 
-    if (isAlreadyFollowing) {
-      // Takibi bırak
-      await User.findByIdAndUpdate(followerId, { $pull: { following: userId } });
-      await User.findByIdAndUpdate(userId, { $pull: { followers: followerId }, $inc: { followersCount: -1 } });
-      await User.findByIdAndUpdate(followerId, { $inc: { followingCount: -1 } });
+    if (isFollowing) {
+      // UNFOLLOW - Takibi bırak
+      console.log('🔄 Unfollowing...');
+      
+      // 1. Follower'ın following array'ini güncelle
+      follower.following = follower.following.filter(id => id.toString() !== userId);
+      
+      // 2. Followed user'ın followers array'ini güncelle
+      userToFollow.followers = userToFollow.followers.filter(id => id.toString() !== followerId);
+      
+      // 3. Her iki kullanıcıyı da kaydet
+      await Promise.all([follower.save(), userToFollow.save()]);
       
       console.log('✅ Unfollowed successfully');
-      return res.json({ success: true, message: 'Takip bırakıldı.', isFollowing: false });
+      
+      return res.json({
+        success: true,
+        message: 'Takip bırakıldı.',
+        isFollowing: false,
+        data: {
+          followerFollowingCount: follower.followingCount,
+          userFollowersCount: userToFollow.followersCount
+        }
+      });
     } else {
-      // Takip et
-      await User.findByIdAndUpdate(followerId, { $push: { following: userId }, $inc: { followingCount: 1 } });
-      await User.findByIdAndUpdate(userId, { $push: { followers: followerId }, $inc: { followersCount: 1 } });
+      // FOLLOW - Takip et
+      console.log('🔄 Following...');
+      
+      // 1. Follower'ın following array'ine ekle
+      follower.following.push(userId);
+      
+      // 2. Followed user'ın followers array'ine ekle
+      userToFollow.followers.push(followerId);
+      
+      // 3. Her iki kullanıcıyı da kaydet
+      await Promise.all([follower.save(), userToFollow.save()]);
 
-      // Puan ekle (hata olursa devam et)
+      // 4. Puan ekle (hata olursa devam et)
       try {
-        await addPoints(followerId, 'follow_user');
+        await addPoints(followerId, 'follow_user', 'Kullanıcı takip etme');
       } catch (pointsError) {
         console.warn('Puan ekleme başarısız, takip işlemi devam ediyor:', pointsError.message);
       }
 
       console.log('✅ Followed successfully');
-      return res.json({ success: true, message: 'Kullanıcı takip edildi.', isFollowing: true });
+      
+      return res.json({
+        success: true,
+        message: 'Kullanıcı takip edildi.',
+        isFollowing: true,
+        data: {
+          followerFollowingCount: follower.followingCount,
+          userFollowersCount: userToFollow.followersCount
+        }
+      });
     }
 
   } catch (error) {
@@ -296,7 +331,7 @@ const followUser = async (req, res) => {
   }
 };
 
-// DELETE /api/user/follow/:userId - Kullanıcı takibi bırak
+// DELETE /api/user/follow/:userId - Kullanıcı takibi bırak (alternatif endpoint)
 const unfollowUser = async (req, res) => {
   try {
     const { userId } = req.params;
@@ -320,19 +355,26 @@ const unfollowUser = async (req, res) => {
       });
     }
 
-    // Takibi bırak
+    // Takibi bırak - Virtual field'lar otomatik hesaplanır
     currentUser.following = currentUser.following.filter(id => id.toString() !== userId);
     userToUnfollow.followers = userToUnfollow.followers.filter(id => id.toString() !== currentUserId.toString());
 
     await currentUser.save();
     await userToUnfollow.save();
 
+    // Puan ekle (unfollow için)
+    try {
+      await addPoints(currentUserId, 'unfollow_user', 'Kullanıcı takibi bırakma');
+    } catch (pointsError) {
+      console.warn('Puan ekleme başarısız, unfollow işlemi devam ediyor:', pointsError.message);
+    }
+
     res.json({
       success: true,
       message: 'Kullanıcı takibi bırakıldı',
       data: {
-        following: currentUser.following.length,
-        followers: userToUnfollow.followers.length
+        following: currentUser.followingCount,
+        followers: userToUnfollow.followersCount
       }
     });
 
@@ -383,6 +425,8 @@ const getUserProfile = async (req, res) => {
           stats: user.stats,
           followers: user.followers,
           following: user.following,
+          followersCount: user.followersCount,
+          followingCount: user.followingCount,
           createdAt: user.createdAt
         },
         isFollowing,
@@ -580,6 +624,113 @@ const getUserFollowing = async (req, res) => {
   }
 };
 
+// GET /api/user/search - Kullanıcı arama
+const searchUsers = asyncHandler(async (req, res) => {
+  const { q, page = 1, limit = 20 } = req.query;
+
+  if (!q || q.trim().length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Arama terimi gerekli'
+    });
+  }
+
+  const searchQuery = q.trim();
+  const pageNumber = parseInt(page);
+  const limitNumber = parseInt(limit);
+  const skip = (pageNumber - 1) * limitNumber;
+
+  // Arama sorgusu - sadece name alanında arama yap
+  const query = {
+    name: { $regex: searchQuery, $options: 'i' }
+  };
+
+  // Mevcut kullanıcıyı sonuçlardan hariç tut
+  query._id = { $ne: req.user._id };
+
+  const users = await User.find(query)
+    .select('_id name avatar xp level followersCount followingCount createdAt')
+    .limit(limitNumber)
+    .skip(skip)
+    .sort({ name: 1 });
+
+  const total = await User.countDocuments(query);
+
+  res.json({
+    success: true,
+    data: {
+      users,
+      pagination: {
+        currentPage: pageNumber,
+        totalPages: Math.ceil(total / limitNumber),
+        totalUsers: total,
+        hasNextPage: skip + limitNumber < total,
+        hasPrevPage: pageNumber > 1
+      }
+    }
+  });
+});
+
+// Test endpoint - Follow sistemi test etmek için
+const testFollowSystem = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const currentUserId = req.user.id;
+
+    const user = await User.findById(userId);
+    const currentUser = await User.findById(currentUserId);
+
+    if (!user || !currentUser) {
+      return res.status(404).json({
+        success: false,
+        error: 'Kullanıcı bulunamadı'
+      });
+    }
+
+    const isFollowing = currentUser.following.includes(userId);
+
+    res.json({
+      success: true,
+      data: {
+        currentUser: {
+          _id: currentUser._id,
+          name: currentUser.name,
+          followingCount: currentUser.followingCount,
+          followersCount: currentUser.followersCount,
+          following: currentUser.following.length,
+          followers: currentUser.followers.length,
+          followingArray: currentUser.following,
+          followersArray: currentUser.followers
+        },
+        targetUser: {
+          _id: user._id,
+          name: user.name,
+          followingCount: user.followingCount,
+          followersCount: user.followersCount,
+          following: user.following.length,
+          followers: user.followers.length,
+          followingArray: user.following,
+          followersArray: user.followers
+        },
+        isFollowing,
+        followStatus: isFollowing ? 'Takip ediliyor' : 'Takip edilmiyor',
+        debug: {
+          currentUserFollowingIds: currentUser.following,
+          targetUserFollowersIds: user.followers,
+          checkResult: currentUser.following.includes(userId)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Follow sistemi test hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Test sırasında hata oluştu'
+    });
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
@@ -589,5 +740,7 @@ module.exports = {
   getFollowingPosts,
   getUserPosts,
   getUserFollowers,
-  getUserFollowing
+  getUserFollowing,
+  searchUsers,
+  testFollowSystem
 }; 

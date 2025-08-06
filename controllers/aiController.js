@@ -1,7 +1,189 @@
-const { optimizePrompt, getMentorResponse, getStepByStepGuidance, getDirectSolution, analyzeImage, getFastAIResponse } = require('../services/geminiService');
+const { optimizePrompt, getMentorResponse, analyzeImage, getFastAIResponse } = require('../services/geminiService');
 
 const Post = require('../models/Post');
 const { addPoints } = require('../services/gamificationService');
+const mongoose = require('mongoose');
+const axios = require('axios');
+
+// Test endpoint'leri
+const testSystemStatus = async (req, res) => {
+  try {
+    console.log('🔍 System Status Test başlatılıyor...');
+    
+    const results = {
+      timestamp: new Date().toISOString(),
+      tests: {}
+    };
+
+    // 1. MongoDB Atlas Cluster Durumu Test
+    try {
+      console.log('📊 MongoDB Atlas Cluster durumu kontrol ediliyor...');
+      const dbStatus = mongoose.connection.readyState;
+      
+      if (dbStatus === 1) {
+        results.tests.mongodb = {
+          status: '✅ BAŞARILI',
+          message: 'MongoDB Atlas bağlantısı aktif',
+          details: {
+            readyState: dbStatus,
+            host: mongoose.connection.host,
+            name: mongoose.connection.name
+          }
+        };
+        console.log('✅ MongoDB Atlas: BAŞARILI');
+      } else {
+        results.tests.mongodb = {
+          status: '❌ BAŞARISIZ',
+          message: 'MongoDB Atlas bağlantısı yok',
+          details: {
+            readyState: dbStatus,
+            error: 'Bağlantı durumu: ' + dbStatus
+          }
+        };
+        console.log('❌ MongoDB Atlas: BAŞARISIZ');
+      }
+    } catch (error) {
+      results.tests.mongodb = {
+        status: '❌ HATA',
+        message: 'MongoDB Atlas test hatası',
+        error: error.message
+      };
+      console.log('❌ MongoDB Atlas Test Hatası:', error.message);
+    }
+
+    // 2. Gemini API Key Geçerliliği Test
+    try {
+      console.log('🔑 Gemini API Key geçerliliği kontrol ediliyor...');
+      const API_KEY = process.env.GEMINI_API_KEY;
+      
+      if (!API_KEY) {
+        results.tests.geminiApi = {
+          status: '❌ HATA',
+          message: 'Gemini API Key bulunamadı',
+          error: 'GEMINI_API_KEY environment variable tanımlı değil'
+        };
+        console.log('❌ Gemini API Key: BULUNAMADI');
+      } else {
+        // Basit API test çağrısı
+        const testResponse = await axios.post(
+          `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+          {
+            contents: [{
+              parts: [{
+                text: "Merhaba, bu bir test mesajıdır."
+              }]
+            }]
+          },
+          {
+            timeout: 10000,
+            headers: { 'Content-Type': 'application/json' }
+          }
+        );
+
+        if (testResponse.data && testResponse.data.candidates) {
+          results.tests.geminiApi = {
+            status: '✅ BAŞARILI',
+            message: 'Gemini API Key geçerli ve çalışıyor',
+            details: {
+              model: 'gemini-2.5-flash',
+              responseReceived: true
+            }
+          };
+          console.log('✅ Gemini API Key: BAŞARILI');
+        } else {
+          results.tests.geminiApi = {
+            status: '⚠️ UYARI',
+            message: 'Gemini API yanıt verdi ama beklenen format değil',
+            details: {
+              response: testResponse.data
+            }
+          };
+          console.log('⚠️ Gemini API Key: UYARI');
+        }
+      }
+    } catch (error) {
+      if (error.response?.status === 400) {
+        results.tests.geminiApi = {
+          status: '❌ HATA',
+          message: 'Gemini API Key geçersiz',
+          error: 'API Key doğrulama hatası (400)'
+        };
+        console.log('❌ Gemini API Key: GEÇERSİZ');
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        results.tests.geminiApi = {
+          status: '❌ HATA',
+          message: 'Gemini API\'ye bağlanılamıyor',
+          error: 'Network bağlantı hatası'
+        };
+        console.log('❌ Gemini API: BAĞLANTI HATASI');
+      } else {
+        results.tests.geminiApi = {
+          status: '❌ HATA',
+          message: 'Gemini API test hatası',
+          error: error.message
+        };
+        console.log('❌ Gemini API Test Hatası:', error.message);
+      }
+    }
+
+    // 3. Backend Sunucu Internet Bağlantısı Test
+    try {
+      console.log('🌐 Backend internet bağlantısı kontrol ediliyor...');
+      
+      // Google DNS'e ping testi
+      const pingTest = await axios.get('https://8.8.8.8', {
+        timeout: 5000,
+        validateStatus: () => true // Herhangi bir status code'u kabul et
+      });
+      
+      results.tests.internetConnection = {
+        status: '✅ BAŞARILI',
+        message: 'Backend sunucusu internet bağlantısı var',
+        details: {
+          testUrl: 'https://8.8.8.8',
+          responseTime: pingTest.headers['x-response-time'] || 'N/A'
+        }
+      };
+      console.log('✅ Internet Bağlantısı: BAŞARILI');
+    } catch (error) {
+      results.tests.internetConnection = {
+        status: '❌ HATA',
+        message: 'Backend sunucusu internet bağlantısı yok',
+        error: error.message
+      };
+      console.log('❌ Internet Bağlantısı: BAŞARISIZ');
+    }
+
+    // 4. Genel Sistem Durumu
+    const allTestsPassed = Object.values(results.tests).every(test => 
+      test.status === '✅ BAŞARILI'
+    );
+
+    results.overallStatus = allTestsPassed ? '✅ TÜM TESTLER BAŞARILI' : '⚠️ BAZI TESTLER BAŞARISIZ';
+    results.summary = {
+      totalTests: Object.keys(results.tests).length,
+      passedTests: Object.values(results.tests).filter(test => test.status === '✅ BAŞARILI').length,
+      failedTests: Object.values(results.tests).filter(test => test.status.includes('❌')).length,
+      warningTests: Object.values(results.tests).filter(test => test.status.includes('⚠️')).length
+    };
+
+    console.log('📊 Test Sonuçları:', results.summary);
+    console.log('🎯 Genel Durum:', results.overallStatus);
+
+    res.json({
+      success: true,
+      data: results
+    });
+
+  } catch (error) {
+    console.error('❌ System Status Test Hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Sistem durumu test edilirken hata oluştu',
+      details: error.message
+    });
+  }
+};
 
 // POST /api/ai/question - AI ile soru sor (eski versiyon - geriye uyumluluk için)
 const askAI = async (req, res) => {
@@ -47,95 +229,83 @@ const askAI = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('AI hata:', error);
+    console.error('❌ AI Controller Error:', error);
     
-    // Kullanıcı dostu hata mesajları
-    let errorMessage = 'AI işleminde hata oluştu.';
-    
-    if (error.message.includes('API anahtarı')) {
-      errorMessage = 'AI servisi konfigürasyon hatası. Lütfen sistem yöneticisi ile iletişime geçin.';
-    } else if (error.message.includes('bağlanılamıyor')) {
-      errorMessage = 'AI servisine bağlanılamıyor. Lütfen internet bağlantınızı kontrol edin.';
-    } else if (error.message.includes('yoğun')) {
-      errorMessage = 'AI servisi şu anda yoğun. Lütfen birkaç dakika sonra tekrar deneyin.';
-    } else if (error.message.includes('kullanılamıyor')) {
-      errorMessage = 'AI servisi şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.';
+    // Socket hang up ve network hataları için özel handling
+    if (error.code === 'ECONNRESET' || 
+        error.message.includes('socket hang up') ||
+        error.code === 'ECONNABORTED' ||
+        error.code === 'ETIMEDOUT') {
+      
+      console.log('🌐 Network bağlantı hatası tespit edildi');
+      return res.status(503).json({ 
+        success: false, 
+        error: 'AI servisi geçici olarak kullanılamıyor. Lütfen birkaç saniye sonra tekrar deneyin.',
+        retryAfter: 5
+      });
     }
     
-    res.status(500).json({ 
-      success: false,
-      error: errorMessage 
+    // Timeout hataları
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      return res.status(408).json({ 
+        success: false, 
+        error: 'AI yanıtı zaman aşımına uğradı. Lütfen tekrar deneyin.',
+        retryAfter: 3
+      });
+    }
+    
+    // API key hataları
+    if (error.message.includes('API anahtarı') || error.response?.status === 401) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'AI servisi kimlik doğrulama hatası. Lütfen sistem yöneticisi ile iletişime geçin.'
+      });
+    }
+    
+    // Rate limit hataları
+    if (error.response?.status === 429) {
+      return res.status(429).json({ 
+        success: false, 
+        error: 'AI servisi şu anda yoğun. Lütfen birkaç dakika sonra tekrar deneyin.',
+        retryAfter: 60
+      });
+    }
+    
+    // Genel hata
+    return res.status(500).json({ 
+      success: false, 
+      error: 'AI işleminde beklenmeyen bir hata oluştu. Lütfen tekrar deneyin.'
     });
   }
 };
 
-// POST /api/ai/ask-with-options - Yeni AI soru endpoint'i (iki seçenekli) - HIZLI VERSİYON
+// askAI fonksiyonunu güncelle
 const askAIWithOptions = async (req, res) => {
   try {
-    const { prompt, responseType, postId, imageURL } = req.body;
+    const { prompt } = req.body;  // responseType parametresi kaldırıldı
     const userId = req.user._id;
 
-    if (!prompt || prompt.trim() === '') {
-      return res.status(400).json({ error: 'Prompt (soru) boş olamaz.' });
-    }
+    console.log('🤖 AI Request:', { prompt: prompt });
 
-    if (!responseType || !['step-by-step', 'direct-solution'].includes(responseType)) {
-      return res.status(400).json({ error: 'Geçerli bir responseType belirtilmelidir (step-by-step veya direct-solution).' });
-    }
-
-    // HIZLI AI YANITI - Tek API çağrısı
-    const aiResponse = await getFastAIResponse(prompt, responseType, imageURL);
-    const responseTypeText = responseType === 'step-by-step' ? 'Adım Adım Rehberlik' : 'Direkt Çözüm';
-
-    // Post'a AI yanıtını kaydet (eğer postId varsa)
-    if (postId) {
-      await Post.findByIdAndUpdate(postId, {
-        aiResponse: aiResponse,
-        aiResponseType: responseType
-      });
-
-
-    }
-
-    // Gamification - AI kullanımı için puan ekle
-    const gamificationResult = await addPoints(
-      userId,
-      'ai_used',
-      `AI ile ${responseTypeText} aldın!`,
-      { postId, prompt, responseType, hasImage: !!imageURL }
-    );
-
-    // Sonucu dön
-    res.json({
-      originalPrompt: prompt,
-      aiResponse,
-      responseType: responseType,
-      responseTypeText: responseTypeText,
-      postId: postId || null,
-      hasImage: !!imageURL,
-      gamification: gamificationResult
-    });
+    const response = await getMentorResponse(prompt);
+    
+    console.log('✅ AI Response successful');
+    
+    return res.json({ success: true, data: response });
 
   } catch (error) {
-    console.error('AI hata:', error);
+    console.error('❌ AI Controller Error:', error);
     
-    // Kullanıcı dostu hata mesajları
-    let errorMessage = 'AI işleminde hata oluştu.';
-    
-    if (error.message.includes('API anahtarı')) {
-      errorMessage = 'AI servisi konfigürasyon hatası. Lütfen sistem yöneticisi ile iletişime geçin.';
-    } else if (error.message.includes('bağlanılamıyor')) {
-      errorMessage = 'AI servisine bağlanılamıyor. Lütfen internet bağlantınızı kontrol edin.';
-    } else if (error.message.includes('yoğun')) {
-      errorMessage = 'AI servisi şu anda yoğun. Lütfen birkaç dakika sonra tekrar deneyin.';
-    } else if (error.message.includes('kullanılamıyor')) {
-      errorMessage = 'AI servisi şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.';
+    // Hata türüne göre özel mesajlar
+    if (error.code === 'ECONNRESET' || error.message.includes('socket hang up')) {
+      return res.status(503).json({ success: false, error: 'AI servisi geçici olarak kullanılamıyor. Lütfen tekrar deneyin.' });
     }
     
-    res.status(500).json({ 
-      success: false,
-      error: errorMessage 
-    });
+    if (error.message.includes('timeout')) {
+      return res.status(408).json({ success: false, error: 'AI servisi çok uzun sürdü. Lütfen tekrar deneyin.' });
+    }
+    
+    return res.status(500).json({ success: false, error: 'AI işleminde hata oluştu.' });
   }
 };
 
@@ -314,5 +484,6 @@ module.exports = {
   analyzePost,
   getHapBilgi,
   analyzeUserInterests,
-  analyzeImageOnly
+  analyzeImageOnly,
+  testSystemStatus // Yeni test endpoint'i
 }; 

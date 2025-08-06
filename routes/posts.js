@@ -9,7 +9,9 @@ const {
   getPost,
   toggleLike,
   deletePost,
-  getPostHapBilgi
+  getPostHapBilgi,
+  searchPosts,
+  getPopularTags
 } = require('../controllers/postController');
 
 // POST /api/posts - Yeni post oluştur (görsel opsiyonel)
@@ -82,10 +84,83 @@ router.get('/test', async (req, res) => {
   }
 });
 
+// 1. SPESİFİK ROUTE'LAR (önce bunlar)
+// GET /api/posts/latest - En son post ID'sini ve yeni post durumunu kontrol et
+router.get('/latest', async (req, res) => {
+  try {
+    console.log('🔍 GET /api/posts/latest çağrıldı:', req.query);
+    
+    const { lastSeenPostId } = req.query;
+    const Post = require('../models/Post');
+    
+    // En son moderasyonu geçmiş postu bul
+    const latestPost = await Post.findOne({ isModerated: true })
+      .sort({ createdAt: -1 })
+      .select('_id createdAt')
+      .lean();
+    
+    if (!latestPost) {
+      return res.json({
+        success: true,
+        data: {
+          latestPostId: null,
+          hasNewPosts: false
+        }
+      });
+    }
+    
+    const latestPostId = latestPost._id.toString();
+    let hasNewPosts = false;
+    
+    // Eğer lastSeenPostId verilmişse, karşılaştır
+    if (lastSeenPostId) {
+      // Son görülen post'tan daha yeni post var mı kontrol et
+      const newerPostsCount = await Post.countDocuments({
+        _id: { $gt: lastSeenPostId },
+        isModerated: true
+      });
+      
+      hasNewPosts = newerPostsCount > 0;
+    } else {
+      // lastSeenPostId verilmemişse, her zaman yeni post var kabul et
+      hasNewPosts = true;
+    }
+    
+    console.log('📊 Latest post check:', {
+      latestPostId,
+      lastSeenPostId,
+      hasNewPosts,
+      latestPostCreatedAt: latestPost.createdAt
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        latestPostId,
+        hasNewPosts
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Latest posts check error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Yeni post kontrolü yapılırken hata oluştu' 
+    });
+  }
+});
+
 // GET /api/posts/personalized - Kişiselleştirilmiş feed
 router.get('/personalized', protect, getPersonalizedPosts);
 
-// GET /api/posts/:id/hap-bilgi - Post için hap bilgi önerileri (önce gelmeli)
+// GET /api/posts/popular-tags - Popüler etiketleri getir
+router.get('/popular-tags', getPopularTags);
+
+// GET /api/posts/search - Post arama (etiketlere göre filtreleme)
+router.get('/search', searchPosts);
+
+// 2. GENEL ROUTE'LAR (sonra bunlar)
+// GET /api/posts/:id/hap-bilgi - Post için hap bilgi önerileri
 router.get('/:id/hap-bilgi', getPostHapBilgi);
 
 // PUT /api/posts/:id/like - Post beğen/beğenme

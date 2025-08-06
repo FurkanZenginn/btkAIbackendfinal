@@ -36,10 +36,16 @@ const userSchema = new mongoose.Schema({
   following: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }],
-  followersCount: { type: Number, default: 0 },
-  followingCount: { type: Number, default: 0 }
+  }]
 }, { timestamps: true });
+
+// Index'ler - Performans optimizasyonu
+userSchema.index({ email: 1 });
+userSchema.index({ name: 1 });
+userSchema.index({ followers: 1 });
+userSchema.index({ following: 1 });
+// Arama için text index - sadece name
+userSchema.index({ name: 'text' });
 
 // Virtual field - Frontend için points (xp ile aynı)
 userSchema.virtual('points').get(function() {
@@ -48,12 +54,12 @@ userSchema.virtual('points').get(function() {
 
 // Virtual field - Frontend için followersCount
 userSchema.virtual('followersCount').get(function() {
-  return this.followers ? this.followers.length : 0;
+  return this.followers && Array.isArray(this.followers) ? this.followers.length : 0;
 });
 
 // Virtual field - Frontend için followingCount
 userSchema.virtual('followingCount').get(function() {
-  return this.following ? this.following.length : 0;
+  return this.following && Array.isArray(this.following) ? this.following.length : 0;
 });
 
 // JSON serialization için virtual'ları dahil et
