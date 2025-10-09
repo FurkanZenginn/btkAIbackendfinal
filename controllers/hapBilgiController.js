@@ -5,7 +5,9 @@ const {
   getPopularHapBilgiler,
   getHapBilgilerByCategory,
   searchHapBilgiler,
-  getSimilarQuestionsByHapBilgi
+  getSimilarQuestionsByHapBilgi,
+  getUserSpecificHapBilgiler,
+  getUserHapBilgiStats
 } = require('../services/hapBilgiService');
 const HapBilgi = require('../models/HapBilgi');
 
@@ -14,6 +16,17 @@ const getHapBilgiByTopic = async (req, res) => {
   try {
     const { topic } = req.params;
     const { difficulty = 'orta', includeSimilarQuestions = false } = req.query;
+    const userId = req.user?._id; // Kullanıcı ID'sini al
+
+    console.log('🔍 Hap Bilgi Request:', { topic, difficulty, userId });
+
+    // KULLANICI BAZLI VERİ FİLTRELEME - Kullanıcı kontrolü
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        error: 'Kullanıcı kimlik doğrulaması gerekli'
+      });
+    }
 
     // Önce mevcut hap bilgilerde ara
     let hapBilgi = await findMatchingHapBilgi(topic, difficulty);
@@ -25,10 +38,20 @@ const getHapBilgiByTopic = async (req, res) => {
       if (aiGenerated) {
         hapBilgi = new HapBilgi({
           ...aiGenerated,
-          createdBy: req.user?._id
+          createdBy: userId, // Kullanıcı ID'sini kaydet
+          lastAccessedBy: userId, // Son erişen kullanıcı
+          accessHistory: [{ userId, accessedAt: new Date() }] // Erişim geçmişi
         });
         await hapBilgi.save();
       }
+    } else {
+      // Mevcut hap bilgi'ye erişim kaydı ekle
+      if (!hapBilgi.accessHistory) {
+        hapBilgi.accessHistory = [];
+      }
+      hapBilgi.accessHistory.push({ userId, accessedAt: new Date() });
+      hapBilgi.lastAccessedBy = userId;
+      await hapBilgi.save();
     }
 
     if (!hapBilgi) {
@@ -51,7 +74,9 @@ const getHapBilgiByTopic = async (req, res) => {
       success: true,
       data: {
         hapBilgi,
-        similarQuestions: includeSimilarQuestions === 'true' ? similarQuestions : undefined
+        similarQuestions: includeSimilarQuestions === 'true' ? similarQuestions : undefined,
+        userId: userId, // Kullanıcı ID'sini response'da döndür
+        accessTimestamp: new Date()
       }
     });
 
@@ -98,10 +123,73 @@ const getHapBilgilerByCategoryController = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Kategori hap bilgiler hatası:', error);
+    console.error('Kategori bazında hap bilgiler hatası:', error);
     res.status(500).json({
       success: false,
-      error: 'Kategori hap bilgiler alınırken hata oluştu'
+      error: 'Kategori bazında hap bilgiler alınırken hata oluştu'
+    });
+  }
+};
+
+// KULLANICI BAZLI VERİ FİLTRELEME - Yeni endpoint'ler
+
+// GET /api/hap-bilgi/user/my-hap-bilgiler - Kullanıcının kendi hap bilgileri
+const getMyHapBilgiler = async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const { category, difficulty, limit = 20, page = 1 } = req.query;
+
+    console.log('👤 Kullanıcı hap bilgileri isteniyor:', { userId, category, difficulty });
+
+    const hapBilgiler = await getUserSpecificHapBilgiler(userId, {
+      category,
+      difficulty,
+      limit: parseInt(limit),
+      page: parseInt(page)
+    });
+
+    res.json({
+      success: true,
+      data: {
+        hapBilgiler,
+        filters: { category, difficulty },
+        pagination: { page: parseInt(page), limit: parseInt(limit) },
+        userId: userId
+      }
+    });
+
+  } catch (error) {
+    console.error('Kullanıcı hap bilgileri hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Kullanıcı hap bilgileri alınırken hata oluştu'
+    });
+  }
+};
+
+// GET /api/hap-bilgi/user/stats - Kullanıcının hap bilgi istatistikleri
+const getMyHapBilgiStats = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    console.log('📊 Kullanıcı hap bilgi istatistikleri isteniyor:', { userId });
+
+    const stats = await getUserHapBilgiStats(userId);
+
+    res.json({
+      success: true,
+      data: {
+        stats,
+        userId: userId,
+        timestamp: new Date()
+      }
+    });
+
+  } catch (error) {
+    console.error('Kullanıcı hap bilgi istatistikleri hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Kullanıcı hap bilgi istatistikleri alınırken hata oluştu'
     });
   }
 };
@@ -307,5 +395,7 @@ module.exports = {
   updateHapBilgi,
   deleteHapBilgi,
   getHapBilgiById,
-  getSimilarQuestions
+  getSimilarQuestions,
+  getMyHapBilgiler,
+  getMyHapBilgiStats
 }; 

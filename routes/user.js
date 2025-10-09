@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect, isAdmin } = require('../middleware/authMiddleware');
-const { upload } = require('../middleware/uploadMiddleware');
+const { uploadAvatar } = require('../middleware/uploadMiddleware');
 const User = require('../models/User');
 const {
   getProfile,
@@ -32,7 +32,7 @@ router.get('/following/posts', protect, getFollowingPosts);
 router.get('/test-follow/:userId', protect, testFollowSystem);
 
 // PUT /api/user/profile - Profil güncelle (FormData ile avatar yükleme)
-router.put('/profile', protect, upload, updateProfile);
+router.put('/profile', protect, uploadAvatar, updateProfile);
 
 // PUT /api/user/profile-json - Sadece JSON için (avatar URL güncelleme)
 router.put('/profile-json', protect, updateProfile);

@@ -1,6 +1,7 @@
 const { optimizePrompt, getMentorResponse, analyzeImage, getFastAIResponse } = require('../services/geminiService');
 
 const Post = require('../models/Post');
+const Comment = require('../models/Comment'); // Yeni eklenen
 const { addPoints } = require('../services/gamificationService');
 const mongoose = require('mongoose');
 const axios = require('axios');
@@ -195,6 +196,21 @@ const askAI = async (req, res) => {
       return res.status(400).json({ error: 'Prompt (soru) boş olamaz.' });
     }
 
+    // KULLANICI BAZLI VERİ FİLTRELEME - Post kontrolü
+    if (postId) {
+      const post = await Post.findById(postId);
+      if (!post) {
+        return res.status(404).json({ error: 'Post bulunamadı.' });
+      }
+      
+      // Post'un bu kullanıcıya ait olup olmadığını kontrol et
+      if (post.userId.toString() !== userId.toString()) {
+        return res.status(403).json({ 
+          error: 'Bu post\'a erişim yetkiniz yok. Sadece kendi post\'larınızda AI kullanabilirsiniz.' 
+        });
+      }
+    }
+
     // 1. Prompt'u iyileştir
     const optimizedPrompt = await optimizePrompt(prompt, imageURL);
 
@@ -206,8 +222,6 @@ const askAI = async (req, res) => {
       await Post.findByIdAndUpdate(postId, {
         aiResponse: aiResponse
       });
-
-
     }
 
     // Gamification - AI kullanımı için puan ekle
@@ -225,7 +239,8 @@ const askAI = async (req, res) => {
       aiResponse,
       postId: postId || null,
       hasImage: !!imageURL,
-      gamification: gamificationResult
+      gamification: gamificationResult,
+      userId: userId // Kullanıcı ID'sini response'da döndür
     });
 
   } catch (error) {
@@ -285,13 +300,26 @@ const askAIWithOptions = async (req, res) => {
     const { prompt } = req.body;  // responseType parametresi kaldırıldı
     const userId = req.user._id;
 
-    console.log('🤖 AI Request:', { prompt: prompt });
+    console.log('🤖 AI Request:', { prompt: prompt, userId: userId });
+
+    // KULLANICI BAZLI VERİ FİLTRELEME - Prompt kontrolü
+    if (!prompt || prompt.trim() === '') {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Prompt boş olamaz.' 
+      });
+    }
 
     const response = await getMentorResponse(prompt);
     
-    console.log('✅ AI Response successful');
+    console.log('✅ AI Response successful for user:', userId);
     
-    return res.json({ success: true, data: response });
+    return res.json({ 
+      success: true, 
+      data: response,
+      userId: userId, // Kullanıcı ID'sini response'da döndür
+      timestamp: new Date()
+    });
 
   } catch (error) {
     console.error('❌ AI Controller Error:', error);
@@ -478,6 +506,162 @@ const analyzeUserInterests = async (req, res) => {
   }
 };
 
+// YENİ: @GeminiHoca comment sistemi
+const createAIComment = async (req, res) => {
+  try {
+    const { postId, parentCommentId, userComment, postContent } = req.body;
+    const userId = req.user._id;
+
+    console.log('🤖 @GeminiHoca Comment Request:', { 
+      postId, 
+      parentCommentId, 
+      userComment, 
+      postContent: postContent?.substring(0, 100) + '...' 
+    });
+
+    // Gerekli alanları kontrol et
+    if (!postId || !userComment) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Post ID ve kullanıcı yorumu gerekli' 
+      });
+    }
+
+    // Post'un var olduğunu kontrol et
+    const post = await Post.findById(postId);
+    if (!post) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Post bulunamadı' 
+      });
+    }
+
+    // AI analizi için prompt oluştur
+    let analysisPrompt = '';
+    
+    if (parentCommentId) {
+      // Alt yorum için analiz
+      const parentComment = await Comment.findById(parentCommentId);
+      if (!parentComment) {
+        return res.status(404).json({ 
+          success: false, 
+          error: 'Üst yorum bulunamadı' 
+        });
+      }
+      
+      analysisPrompt = `
+      Öğrenci yorumu: "${userComment}"
+      Üst yorum: "${parentComment.text}"
+      Post içeriği: "${postContent || post.caption || 'Görsel post'}"
+      
+      Bu yorumlara göre öğrenciye yardımcı ol. Kısa, net ve faydalı bir yanıt ver.
+      Yanıtın maksimum 200 karakter olsun.
+      `;
+    } else {
+      // Ana yorum için analiz
+      analysisPrompt = `
+      Öğrenci yorumu: "${userComment}"
+      Post içeriği: "${postContent || post.caption || 'Görsel post'}"
+      
+      Bu yoruma göre öğrenciye yardımcı ol. Kısa, net ve faydalı bir yanıt ver.
+      Yanıtın maksimum 200 karakter olsun.
+      `;
+    }
+
+    // AI yanıtı al
+    console.log('🧠 AI Analizi başlatılıyor...');
+    const aiResponse = await getFastAIResponse(analysisPrompt);
+    
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      throw new Error('AI yanıtı alınamadı');
+    }
+
+    console.log('✅ AI Yanıtı alındı:', aiResponse.substring(0, 100) + '...');
+
+    // AI yanıtını yorum olarak kaydet
+    const aiComment = new Comment({
+      postId,
+      userId: process.env.GEMINI_AI_USER_ID || '507f1f77bcf86cd799439011', // AI user ID
+      text: aiResponse,
+      parentCommentId: parentCommentId || null,
+      isFromGemini: true, // AI yorumu olduğunu belirt
+      metadata: {
+        originalUserComment: userComment,
+        postContent: postContent || post.caption,
+        aiModel: 'gemini-2.5-flash',
+        analysisPrompt: analysisPrompt.substring(0, 200) + '...'
+      }
+    });
+
+    await aiComment.save();
+    console.log('💾 AI Comment kaydedildi:', aiComment._id);
+
+    // Post'un yorum sayısını güncelle
+    await Post.findByIdAndUpdate(postId, {
+      $inc: { commentCount: 1 }
+    });
+
+    // AI yorumunu populate et
+    const populatedAiComment = await Comment.findById(aiComment._id)
+      .populate('userId', 'name avatar');
+
+    console.log('🔍 AI Comment populate edildi - parentCommentId:', populatedAiComment.parentCommentId);
+
+    // Gamification - AI yorumu için puan ekle
+    const gamificationResult = await addPoints(
+      userId,
+      'ai_comment_used',
+      '@GeminiHoca ile yorum aldın!',
+      { postId, commentId: aiComment._id, aiResponse: aiResponse.substring(0, 50) }
+    );
+
+    console.log('🎯 @GeminiHoca Comment başarılı!');
+
+    res.status(201).json({
+      success: true,
+      message: 'AI yanıtı yorum olarak kaydedildi',
+      data: {
+        aiComment: populatedAiComment,
+        originalUserComment: userComment,
+        postId,
+        parentCommentId: parentCommentId || null,
+        gamification: gamificationResult
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ @GeminiHoca Comment Hatası:', error);
+    
+    // Hata türüne göre özel mesajlar
+    if (error.message.includes('AI yanıtı alınamadı')) {
+      return res.status(500).json({ 
+        success: false, 
+        error: 'AI analizi başarısız. Lütfen tekrar deneyin.' 
+      });
+    }
+    
+    if (error.code === 'ECONNRESET' || error.message.includes('socket hang up')) {
+      return res.status(503).json({ 
+        success: false, 
+        error: 'AI servisi geçici olarak kullanılamıyor. Lütfen tekrar deneyin.' 
+      });
+    }
+    
+    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
+      return res.status(408).json({ 
+        success: false, 
+        error: 'AI yanıtı zaman aşımına uğradı. Lütfen tekrar deneyin.' 
+      });
+    }
+    
+    // Genel hata
+    return res.status(500).json({ 
+      success: false, 
+      error: 'AI yorum oluşturulurken hata oluştu. Lütfen tekrar deneyin.' 
+    });
+  }
+};
+
 module.exports = {
   askAI,
   askAIWithOptions,
@@ -485,5 +669,6 @@ module.exports = {
   getHapBilgi,
   analyzeUserInterests,
   analyzeImageOnly,
-  testSystemStatus // Yeni test endpoint'i
+  testSystemStatus,
+  createAIComment // Yeni eklenen
 }; 

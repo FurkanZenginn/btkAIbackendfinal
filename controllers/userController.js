@@ -127,18 +127,35 @@ const updateProfile = asyncHandler(async (req, res) => {
       });
       
       const { uploadToCloudinary } = require('../middleware/uploadMiddleware');
-      const avatarUrl = await uploadToCloudinary(avatarFile.buffer, {
-        folder: 'avatars',
-        public_id: `user_${userId}_${Date.now()}`
-      });
       
-      updateData.avatar = avatarUrl;
-      console.log('  - ✅ Avatar Cloudinary\'ye yüklendi (file):', avatarUrl);
-    } catch (uploadError) {
-      console.error('  - ❌ Avatar upload hatası (file):', uploadError);
+      // Güvenli buffer handling
+      if (avatarFile.buffer && Buffer.isBuffer(avatarFile.buffer)) {
+        try {
+          const avatarUrl = await uploadToCloudinary(avatarFile.buffer, {
+            folder: 'avatars',
+            public_id: `user_${userId}_${Date.now()}`
+          });
+          updateData.avatar = avatarUrl;
+          console.log('  - ✅ Avatar Cloudinary\'ye yüklendi (file):', avatarUrl);
+        } catch (uploadError) {
+          console.error('  - ❌ Avatar upload hatası (file):', uploadError);
+          return res.status(500).json({
+            success: false,
+            error: 'Avatar yükleme hatası: ' + uploadError.message
+          });
+        }
+      } else {
+        console.error('  - ❌ Invalid avatar file buffer:', avatarFile);
+        return res.status(400).json({
+          success: false,
+          error: 'Geçersiz avatar dosya formatı'
+        });
+      }
+    } catch (error) {
+      console.error('  - ❌ Avatar file processing error:', error);
       return res.status(500).json({
         success: false,
-        error: 'Avatar yükleme hatası: ' + uploadError.message
+        error: 'Avatar dosya işleme hatası: ' + error.message
       });
     }
   } else if (avatarPath) {
@@ -180,18 +197,35 @@ const updateProfile = asyncHandler(async (req, res) => {
         console.log('📊 File read, size:', fileBuffer.length);
         
         const { uploadToCloudinary } = require('../middleware/uploadMiddleware');
-        const avatarUrl = await uploadToCloudinary(fileBuffer, {
-          folder: 'avatars',
-          public_id: `user_${userId}_${Date.now()}`
-        });
         
-        updateData.avatar = avatarUrl;
-        console.log('  - ✅ Avatar Cloudinary\'ye yüklendi (file://):', avatarUrl);
-      } catch (uploadError) {
-        console.error('  - ❌ Avatar upload hatası (file://):', uploadError);
+        // Güvenli buffer handling
+        if (fileBuffer && Buffer.isBuffer(fileBuffer)) {
+          try {
+            const avatarUrl = await uploadToCloudinary(fileBuffer, {
+              folder: 'avatars',
+              public_id: `user_${userId}_${Date.now()}`
+            });
+            updateData.avatar = avatarUrl;
+            console.log('  - ✅ Avatar Cloudinary\'ye yüklendi (file://):', avatarUrl);
+          } catch (uploadError) {
+            console.error('  - ❌ Avatar upload hatası (file://):', uploadError);
+            return res.status(500).json({
+              success: false,
+              error: 'Avatar yükleme hatası: ' + uploadError.message
+            });
+          }
+        } else {
+          console.error('  - ❌ Invalid file buffer:', fileBuffer);
+          return res.status(400).json({
+            success: false,
+            error: 'Geçersiz dosya buffer formatı'
+          });
+        }
+      } catch (error) {
+        console.error('  - ❌ File:// URL processing error:', error);
         return res.status(500).json({
           success: false,
-          error: 'Avatar yükleme hatası: ' + uploadError.message
+          error: 'File:// URL işleme hatası: ' + error.message
         });
       }
     } else if (avatarPath.startsWith('http')) {
@@ -640,9 +674,12 @@ const searchUsers = asyncHandler(async (req, res) => {
   const limitNumber = parseInt(limit);
   const skip = (pageNumber - 1) * limitNumber;
 
-  // Arama sorgusu - sadece name alanında arama yap
+  // Gelişmiş kullanıcı arama - isim, email ve kullanıcı adı ile
   const query = {
-    name: { $regex: searchQuery, $options: 'i' }
+    $or: [
+      { name: { $regex: searchQuery, $options: 'i' } },
+      { email: { $regex: searchQuery, $options: 'i' } }
+    ]
   };
 
   // Mevcut kullanıcıyı sonuçlardan hariç tut
@@ -666,6 +703,9 @@ const searchUsers = asyncHandler(async (req, res) => {
         totalUsers: total,
         hasNextPage: skip + limitNumber < total,
         hasPrevPage: pageNumber > 1
+      },
+      filters: {
+        query: searchQuery
       }
     }
   });

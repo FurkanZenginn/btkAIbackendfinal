@@ -10,6 +10,9 @@ const getComments = async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const skip = (page - 1) * limit;
 
+    console.log('🔍 Comment Get Request:', { postId, page, limit, skip });
+
+    // Ana yorumları getir - TÜM field'ları seç (select kullanma)
     const comments = await Comment.find({ 
       postId, 
       parentCommentId: null // Sadece ana yorumlar
@@ -19,18 +22,36 @@ const getComments = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    console.log('📊 Ana yorumlar bulundu:', comments.length);
+    console.log('🔍 İlk yorum parentCommentId:', comments[0]?.parentCommentId);
+    console.log('🔍 İlk yorum tüm field\'lar:', Object.keys(comments[0]?.toObject() || {}));
+
     // Her yorum için alt yorumları getir
     for (let comment of comments) {
+      console.log(`🔍 Yorum ${comment._id} için alt yorumlar aranıyor...`);
+      
       const replies = await Comment.find({ parentCommentId: comment._id })
         .populate('userId', 'name avatar')
         .sort({ createdAt: 1 })
         .limit(5); // En fazla 5 alt yorum
       
+      console.log(`📝 Yorum ${comment._id} için ${replies.length} alt yorum bulundu`);
+      replies.forEach((reply, index) => {
+        console.log(`  ${index + 1}. Alt yorum ${reply._id} parentCommentId: ${reply.parentCommentId}`);
+      });
+      
+      // toObject() kullan ve parentCommentId'yi açıkça kontrol et
       comment = comment.toObject();
-      comment.replies = replies;
+      comment.replies = replies.map(reply => reply.toObject());
+      
+      console.log(`✅ Yorum ${comment._id} toObject sonrası parentCommentId: ${comment.parentCommentId}`);
     }
 
     const total = await Comment.countDocuments({ postId, parentCommentId: null });
+
+    console.log('✅ Response hazırlanıyor...');
+    console.log('📊 Toplam yorum sayısı:', total);
+    console.log('🔍 İlk yorum final parentCommentId:', comments[0]?.parentCommentId);
 
     res.json({
       success: true,
@@ -43,7 +64,7 @@ const getComments = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Yorum getirme hatası:', error);
+    console.error('❌ Yorum getirme hatası:', error);
     res.status(500).json({ 
       success: false,
       error: 'Yorumlar getirilirken hata oluştu' 
@@ -180,6 +201,9 @@ const getCommentsByQuery = async (req, res) => {
 
     const skip = (page - 1) * limit;
 
+    console.log('🔍 Comment Query Request:', { postId, page, limit, skip });
+
+    // Ana yorumları getir - TÜM field'ları seç (select kullanma)
     const comments = await Comment.find({ 
       postId, 
       parentCommentId: null // Sadece ana yorumlar
@@ -189,18 +213,36 @@ const getCommentsByQuery = async (req, res) => {
       .skip(skip)
       .limit(parseInt(limit));
 
+    console.log('📊 Query ile ana yorumlar bulundu:', comments.length);
+    console.log('🔍 İlk yorum parentCommentId:', comments[0]?.parentCommentId);
+    console.log('🔍 İlk yorum tüm field\'lar:', Object.keys(comments[0]?.toObject() || {}));
+
     // Her yorum için alt yorumları getir
     for (let comment of comments) {
+      console.log(`🔍 Query yorum ${comment._id} için alt yorumlar aranıyor...`);
+      
       const replies = await Comment.find({ parentCommentId: comment._id })
         .populate('userId', 'name avatar')
         .sort({ createdAt: 1 })
         .limit(5); // En fazla 5 alt yorum
       
+      console.log(`📝 Query yorum ${comment._id} için ${replies.length} alt yorum bulundu`);
+      replies.forEach((reply, index) => {
+        console.log(`  ${index + 1}. Alt yorum ${reply._id} parentCommentId: ${reply.parentCommentId}`);
+      });
+      
+      // toObject() kullan ve parentCommentId'yi açıkça kontrol et
       comment = comment.toObject();
-      comment.replies = replies;
+      comment.replies = replies.map(reply => reply.toObject());
+      
+      console.log(`✅ Query yorum ${comment._id} toObject sonrası parentCommentId: ${comment.parentCommentId}`);
     }
 
     const total = await Comment.countDocuments({ postId, parentCommentId: null });
+
+    console.log('✅ Query Response hazırlanıyor...');
+    console.log('📊 Query toplam yorum sayısı:', total);
+    console.log('🔍 Query ilk yorum final parentCommentId:', comments[0]?.parentCommentId);
 
     res.json({
       success: true,
@@ -213,7 +255,7 @@ const getCommentsByQuery = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Yorum getirme hatası (query):', error);
+    console.error('❌ Yorum getirme hatası (query):', error);
     res.status(500).json({ 
       success: false,
       error: 'Yorumlar getirilirken hata oluştu' 

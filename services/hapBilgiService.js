@@ -408,6 +408,117 @@ ANAHTAR_KELİMELER: [virgülle ayrılmış anahtar kelimeler]
   }
 };
 
+// KULLANICI BAZLI VERİ FİLTRELEME - Hap bilgi'leri kullanıcıya göre filtrele
+const getUserSpecificHapBilgiler = async (userId, options = {}) => {
+  try {
+    const { category, difficulty, limit = 20, page = 1 } = options;
+    const skip = (page - 1) * limit;
+    
+    // Kullanıcıya özel filtreleme
+    const query = {
+      $or: [
+        // Kullanıcının oluşturduğu hap bilgiler
+        { createdBy: userId },
+        // Kullanıcının eriştiği hap bilgiler
+        { 'accessHistory.userId': userId },
+        // Kullanıcının bookmark'ladığı hap bilgiler
+        { 'userStats.userId': userId, 'userStats.isBookmarked': true }
+      ]
+    };
+    
+    // Kategori filtresi
+    if (category) {
+      query.category = category;
+    }
+    
+    // Zorluk filtresi
+    if (difficulty) {
+      query.difficulty = difficulty;
+    }
+    
+    const hapBilgiler = await HapBilgi.find(query)
+      .populate('createdBy', 'name')
+      .populate('lastAccessedBy', 'name')
+      .sort({ 'accessHistory.accessedAt': -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    return hapBilgiler;
+    
+  } catch (error) {
+    console.error('Kullanıcı bazlı hap bilgi getirme hatası:', error);
+    throw error;
+  }
+};
+
+// Kullanıcının hap bilgi istatistiklerini getir
+const getUserHapBilgiStats = async (userId) => {
+  try {
+    const stats = await HapBilgi.aggregate([
+      {
+        $match: {
+          $or: [
+            { createdBy: userId },
+            { 'accessHistory.userId': userId }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalCreated: {
+            $sum: { $cond: [{ $eq: ['$createdBy', userId] }, 1, 0] }
+          },
+          totalAccessed: {
+            $sum: { $cond: [{ $in: [userId, '$accessHistory.userId'] }, 1, 0] }
+          },
+          totalBookmarked: {
+            $sum: {
+              $size: {
+                $filter: {
+                  input: '$userStats',
+                  cond: { $and: [{ $eq: ['$$this.userId', userId] }, { $eq: ['$$this.isBookmarked', true] }] }
+                }
+              }
+            }
+          },
+          averageRating: {
+            $avg: {
+              $let: {
+                vars: {
+                  userRating: {
+                    $arrayElemAt: [
+                      {
+                        $filter: {
+                          input: '$userStats',
+                          cond: { $eq: ['$$this.userId', userId] }
+                        }
+                      },
+                      0
+                    ]
+                  }
+                },
+                in: '$$userRating.rating'
+              }
+            }
+          }
+        }
+      }
+    ]);
+    
+    return stats[0] || {
+      totalCreated: 0,
+      totalAccessed: 0,
+      totalBookmarked: 0,
+      averageRating: 0
+    };
+    
+  } catch (error) {
+    console.error('Kullanıcı hap bilgi istatistikleri hatası:', error);
+    throw error;
+  }
+};
+
 module.exports = {
   analyzePostAndCreateHapBilgi,
   analyzePostAndMatchHapBilgi, // Eksik fonksiyon eklendi
@@ -416,5 +527,7 @@ module.exports = {
   getRecommendedHapBilgiler,
   findSimilarQuestions,
   searchHapBilgiler,
-  getHapBilgiStats
+  getHapBilgiStats,
+  getUserSpecificHapBilgiler,
+  getUserHapBilgiStats
 }; 

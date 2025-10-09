@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
-const { upload } = require('../middleware/uploadMiddleware');
+const { uploadImage } = require('../middleware/uploadMiddleware');
 const {
   createPost,
   getPosts,
@@ -11,11 +11,12 @@ const {
   deletePost,
   getPostHapBilgi,
   searchPosts,
-  getPopularTags
+  getPopularTags,
+  searchTags
 } = require('../controllers/postController');
 
 // POST /api/posts - Yeni post oluştur (görsel opsiyonel)
-router.post('/', protect, upload, createPost);
+router.post('/', protect, uploadImage, createPost);
 
 // GET /api/posts - Tüm postları getir (feed)
 router.get('/', async (req, res) => {
@@ -154,12 +155,47 @@ router.get('/latest', async (req, res) => {
 router.get('/personalized', protect, getPersonalizedPosts);
 
 // GET /api/posts/popular-tags - Popüler etiketleri getir
-router.get('/popular-tags', getPopularTags);
+router.get('/popular-tags', async (req, res) => {
+  try {
+    const result = await getPopularTags(req, res);
+  } catch (error) {
+    console.error('Popular tags error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Popüler etiketler yüklenirken hata oluştu'
+    });
+  }
+});
 
-// GET /api/posts/search - Post arama (etiketlere göre filtreleme)
-router.get('/search', searchPosts);
+// SEARCH ENDPOINT'LERİ - Yeni eklenen
 
-// 2. GENEL ROUTE'LAR (sonra bunlar)
+// GET /api/search/posts - Post arama
+router.get('/search', async (req, res) => {
+  try {
+    await searchPosts(req, res);
+  } catch (error) {
+    console.error('Post search error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Post arama sırasında hata oluştu'
+    });
+  }
+});
+
+// GET /api/search/tags - Etiket arama
+router.get('/search-tags', async (req, res) => {
+  try {
+    await searchTags(req, res);
+  } catch (error) {
+    console.error('Tag search error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Etiket arama sırasında hata oluştu'
+    });
+  }
+});
+
+// 2. PARAMETRELI ROUTE'LAR (sonra bunlar)
 // GET /api/posts/:id/hap-bilgi - Post için hap bilgi önerileri
 router.get('/:id/hap-bilgi', getPostHapBilgi);
 

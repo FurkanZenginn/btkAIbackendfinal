@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCR Test Sayfası</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        #fileInput {
+            display: none;
+        }
+        .btn {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .btn:hover {
+            background-color: #0056b3;
+        }
+        .btn:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+        }
+        .result.success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .result.error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .loading {
+            text-align: center;
+            color: #007bff;
+        }
+        #preview {
+            max-width: 100%;
+            max-height: 300px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 OCR Test Sayfası</h1>
+        <p>Resim yükleyerek OCR (Optical Character Recognition) özelliğini test edin.</p>
+        
+        <div class="upload-area" id="uploadArea">
+            <p>📁 Resim dosyasını buraya sürükleyin veya tıklayın</p>
+            <input type="file" id="fileInput" accept="image/*">
+            <button class="btn" onclick="document.getElementById('fileInput').click()">Dosya Seç</button>
+        </div>
+        
+        <div id="previewContainer" style="display: none;">
+            <h3>Seçilen Resim:</h3>
+            <img id="preview" src="" alt="Önizleme">
+            <br>
+            <button class="btn" id="extractBtn" onclick="extractText()">Metin Çıkar</button>
+        </div>
+        
+        <div id="result"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const previewContainer = document.getElementById('previewContainer');
+        const preview = document.getElementById('preview');
+        const result = document.getElementById('result');
+        const extractBtn = document.getElementById('extractBtn');
+
+        // Drag and drop functionality
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showResult('Lütfen sadece resim dosyası seçin.', 'error');
+                return;
+            }
+
+            // Preview image
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                previewContainer.style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function extractText() {
+            const file = fileInput.files[0];
+            if (!file) {
+                showResult('Lütfen önce bir resim dosyası seçin.', 'error');
+                return;
+            }
+
+            extractBtn.disabled = true;
+            extractBtn.textContent = 'İşleniyor...';
+            showResult('🔍 Resim işleniyor, lütfen bekleyin...', 'loading');
+
+            const formData = new FormData();
+            formData.append('image', file);
+
+            try {
+                const response = await fetch('http://localhost:3000/api/ocr/extract-text', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showResult(`✅ Metin başarıyla çıkarıldı!\n\n📝 Çıkarılan Metin:\n${data.text}\n\n🎯 Güven Skoru: ${(data.confidence * 100).toFixed(2)}%`, 'success');
+                } else {
+                    showResult(`❌ Hata: ${data.error}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Bağlantı hatası: ${error.message}`, 'error');
+            } finally {
+                extractBtn.disabled = false;
+                extractBtn.textContent = 'Metin Çıkar';
+            }
+        }
+
+        function showResult(message, type) {
+            result.innerHTML = `<div class="result ${type}">${message}</div>`;
+        }
+    </script>
+</body>
+</html>

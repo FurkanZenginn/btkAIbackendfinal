@@ -6,10 +6,13 @@ const { NotFoundError, ValidationError } = require('../utils/AppError');
 const {
   analyzePostAndCreateHapBilgi,
   createHapBilgiFromQuestion, // Yeni import
+  findAndLinkRelatedHapBilgiler, // İlişkili hap bilgileri bağlama için
   getRecommendedHapBilgiler,
   findSimilarQuestions,
   searchHapBilgiler,
-  getHapBilgiStats
+  getHapBilgiStats,
+  getUserSpecificHapBilgiler,
+  getUserHapBilgiStats
 } = require('../services/hapBilgiService');
 const HapBilgi = require('../models/HapBilgi');
 
@@ -116,6 +119,61 @@ router.post('/create-from-question', protect, asyncHandler(async (req, res) => {
   }
   
   const hapBilgi = await createHapBilgiFromQuestion(question, aiResponse, req.user._id);
+  sendSuccess(res, hapBilgi, 'Hap bilgi başarıyla oluşturuldu');
+}));
+
+// POST /api/hap-bilgi/create - Yeni hap bilgi oluştur (Görsellerde belirtilen endpoint)
+router.post('/create', protect, asyncHandler(async (req, res) => {
+  const {
+    title,
+    content,
+    category,
+    difficulty,
+    keywords,
+    tags,
+    originalQuestion,
+    originalAIResponse
+  } = req.body;
+  
+  // Validation
+  if (!title || !content || !category || !difficulty) {
+    throw new ValidationError('Title, content, category ve difficulty alanları zorunludur');
+  }
+  
+  // Hap bilgi oluştur
+  const hapBilgi = new HapBilgi({
+    topic: title, // title'ı topic olarak kullan
+    title,
+    content,
+    category,
+    difficulty,
+    tags: tags || [],
+    aiAnalysis: {
+      confidence: 0.8,
+      keywords: keywords || [],
+      summary: content.substring(0, 200), // İlk 200 karakteri özet olarak kullan
+      relatedConcepts: keywords || [],
+      learningObjectives: keywords || []
+    },
+    sourceType: 'ai_generated',
+    createdBy: req.user._id
+  });
+  
+  // Eğer originalQuestion ve originalAIResponse varsa kaydet
+  if (originalQuestion && originalAIResponse) {
+    hapBilgi.aiAnalysis.sourceQuestion = originalQuestion;
+    hapBilgi.aiAnalysis.sourceAIResponse = originalAIResponse;
+  }
+  
+  await hapBilgi.save();
+  
+  // İlişkili hap bilgileri bul ve bağla
+  try {
+    await findAndLinkRelatedHapBilgiler(hapBilgi);
+  } catch (error) {
+    console.error('İlişkili hap bilgi bağlama hatası:', error);
+  }
+  
   sendSuccess(res, hapBilgi, 'Hap bilgi başarıyla oluşturuldu');
 }));
 
@@ -227,6 +285,38 @@ router.get('/user/saved', protect, asyncHandler(async (req, res) => {
     currentPage: parseInt(page),
     totalPages: Math.ceil(total / limit),
     total
+  });
+}));
+
+// KULLANICI BAZLI VERİ FİLTRELEME - Yeni endpoint'ler
+
+// GET /api/hap-bilgi/user/my-hap-bilgiler - Kullanıcının kendi hap bilgileri
+router.get('/user/my-hap-bilgiler', protect, asyncHandler(async (req, res) => {
+  const { category, difficulty, limit = 20, page = 1 } = req.query;
+  
+  const hapBilgiler = await getUserSpecificHapBilgiler(req.user._id, {
+    category,
+    difficulty,
+    limit: parseInt(limit),
+    page: parseInt(page)
+  });
+  
+  sendSuccess(res, {
+    hapBilgiler,
+    filters: { category, difficulty },
+    pagination: { page: parseInt(page), limit: parseInt(limit) },
+    userId: req.user._id
+  });
+}));
+
+// GET /api/hap-bilgi/user/stats - Kullanıcının hap bilgi istatistikleri
+router.get('/user/stats', protect, asyncHandler(async (req, res) => {
+  const stats = await getUserHapBilgiStats(req.user._id);
+  
+  sendSuccess(res, {
+    stats,
+    userId: req.user._id,
+    timestamp: new Date()
   });
 }));
 
