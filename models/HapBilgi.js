@@ -52,7 +52,14 @@ const hapBilgiSchema = new mongoose.Schema({
     learningObjectives: [{
       type: String,
       trim: true
-    }]
+    }],
+    sourceQuestion: {
+      type: String,
+      trim: true
+    },
+    sourceAIResponse: {
+      type: String
+    }
   },
   
   // Sosyal özellikler
@@ -144,8 +151,80 @@ const hapBilgiSchema = new mongoose.Schema({
   // Oluşturan
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+    ref: 'User',
+    required: true
   },
+  
+  // KULLANICI BAZLI VERİ İZOLASYONU - Yeni alanlar
+  lastAccessedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  
+  accessHistory: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    accessedAt: {
+      type: Date,
+      default: Date.now
+    },
+    accessType: {
+      type: String,
+      enum: ['view', 'search', 'create', 'update'],
+      default: 'view'
+    }
+  }],
+  
+  // Kullanıcı bazlı istatistikler
+  userStats: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    viewCount: {
+      type: Number,
+      default: 0
+    },
+    lastViewed: {
+      type: Date,
+      default: Date.now
+    },
+    isBookmarked: {
+      type: Boolean,
+      default: false
+    },
+    rating: {
+      type: Number,
+      min: 1,
+      max: 5,
+      default: null
+    }
+  }],
+  
+  // Kullanıcı bazlı içerik
+  userContent: [{
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    notes: String,
+    questions: [String],
+    difficulty: {
+      type: String,
+      enum: ['kolay', 'orta', 'zor'],
+      default: 'orta'
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   
   // Kaynak bilgileri
   sourcePost: {
@@ -154,7 +233,7 @@ const hapBilgiSchema = new mongoose.Schema({
   },
   sourceType: {
     type: String,
-    enum: ['post', 'question_ai_response'],
+    enum: ['post', 'question_ai_response', 'ai_generated'],
     default: 'post'
   },
   

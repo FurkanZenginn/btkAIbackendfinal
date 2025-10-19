@@ -59,6 +59,11 @@ const commentSchema = new mongoose.Schema({
   },
   rejectedAt: {
     type: Date
+  },
+  // YENİ: AI yorumları için metadata
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   }
 }, { 
   timestamps: true 

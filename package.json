@@ -8,10 +8,19 @@
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": ["education", "ai", "mentor", "backend", "api", "nodejs", "express"],
+  "keywords": [
+    "education",
+    "ai",
+    "mentor",
+    "backend",
+    "api",
+    "nodejs",
+    "express"
+  ],
   "author": "AI Mentor Team",
   "license": "MIT",
   "dependencies": {
+    "@google-cloud/vision": "^5.3.3",
     "axios": "^1.11.0",
     "bcryptjs": "^3.0.2",
     "cloudinary": "^2.7.0",

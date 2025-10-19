@@ -8,13 +8,16 @@ const {
   getHapBilgi,
   analyzeUserInterests,
   analyzeImageOnly,
-  testSystemStatus
+  testSystemStatus,
+  createAIComment
 } = require('../controllers/aiController');
 const { improvePromptFrontend, PROMPT_IMPROVEMENT_RULES } = require('../services/geminiService');
 
 router.post('/question', protect, askAI);
 
 router.post('/ask-with-options', protect, askAIWithOptions);
+
+router.post('/comment', protect, createAIComment);
 
 router.post('/improve-prompt', (req, res) => {
   try {

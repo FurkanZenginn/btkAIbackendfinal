@@ -71,8 +71,28 @@ const createPost = async (req, res) => {
 
       console.log('Cloudinary yükleme başlıyor...');
       
-      // Cloudinary'ye yükle
-      imageURL = await uploadToCloudinary(req.file);
+      // Cloudinary'ye yükle - Buffer handling düzeltildi
+      console.log('📁 File object debug:', {
+        hasFile: !!req.file,
+        fileType: typeof req.file,
+        hasBuffer: !!req.file?.buffer,
+        bufferType: typeof req.file?.buffer,
+        isBuffer: Buffer.isBuffer(req.file?.buffer),
+        originalname: req.file?.originalname,
+        mimetype: req.file?.mimetype,
+        size: req.file?.size
+      });
+      
+      // Güvenli buffer handling
+      if (req.file && req.file.buffer && Buffer.isBuffer(req.file.buffer)) {
+        imageURL = await uploadToCloudinary(req.file.buffer, {
+          folder: 'posts',
+          public_id: `post_${Date.now()}`
+        });
+      } else {
+        console.error('❌ Invalid file format:', req.file);
+        return res.status(400).json({ error: 'Geçersiz dosya formatı' });
+      }
       
       console.log('Cloudinary yükleme tamamlandı:', imageURL);
 
@@ -381,78 +401,83 @@ const getPostHapBilgi = async (req, res) => {
   }
 };
 
-// GET /api/posts/search - Post arama (etiketlere göre filtreleme)
+// GET /api/posts/search - Post arama
 const searchPosts = async (req, res) => {
   try {
-    const { q, tags, category, difficulty, page = 1, limit = 10 } = req.query;
-    
-    console.log('🔍 Search posts:', { q, tags, category, difficulty, page, limit });
-    
+    const { q, type, category, difficulty, limit = 20, page = 1 } = req.query;
+    const skip = (page - 1) * limit;
+
+    if (!q || q.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Arama terimi gerekli'
+      });
+    }
+
+    const searchQuery = q.trim();
+    const pageNumber = parseInt(page);
+    const limitNumber = parseInt(limit);
+
     // Arama sorgusu oluştur
-    let searchQuery = { isModerated: true };
-    
-    // Metin araması
-    if (q && q.trim()) {
-      searchQuery.$or = [
-        { content: { $regex: q, $options: 'i' } },
-        { caption: { $regex: q, $options: 'i' } }
-      ];
+    let query = {
+      $or: [
+        { content: { $regex: searchQuery, $options: 'i' } },
+        { caption: { $regex: searchQuery, $options: 'i' } },
+        { topicTags: { $in: [new RegExp(searchQuery, 'i')] } }
+      ],
+      isModerated: true // Sadece moderasyonu geçmiş post'lar
+    };
+
+    // Post türü filtresi
+    if (type && ['soru', 'danışma', 'question', 'consultation'].includes(type)) {
+      query.postType = type;
     }
-    
-    // Etiket filtreleme
-    if (tags) {
-      const tagArray = tags.split(',').map(tag => tag.trim());
-      searchQuery.topicTags = { $in: tagArray };
-    }
-    
-    // Kategori filtreleme (hap bilgi analizi üzerinden)
+
+    // Kategori filtresi (hap bilgi analizi varsa)
     if (category) {
-      searchQuery['hapBilgiAnalysis.detectedCategory'] = category;
+      query['hapBilgiAnalysis.detectedCategory'] = category;
     }
-    
-    // Zorluk seviyesi filtreleme
-    if (difficulty) {
-      searchQuery.difficulty = difficulty;
+
+    // Zorluk seviyesi filtresi
+    if (difficulty && ['kolay', 'orta', 'zor'].includes(difficulty)) {
+      query.difficulty = difficulty;
     }
-    
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
-    // Postları bul
-    const posts = await Post.find(searchQuery)
+
+    // Post'ları bul
+    const posts = await Post.find(query)
       .populate('userId', 'name avatar')
-      .populate('hapBilgiAnalysis.relatedHapBilgiler.hapBilgiId', 'topic title content category difficulty tags')
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(parseInt(limit));
-    
-    // Toplam sayı
-    const total = await Post.countDocuments(searchQuery);
-    
-    // Popüler etiketleri getir
-    const popularTags = await Post.aggregate([
-      { $match: { isModerated: true } },
-      { $unwind: '$topicTags' },
-      { $group: { _id: '$topicTags', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-      { $limit: 10 }
-    ]);
-    
+      .limit(limitNumber);
+
+    // Toplam sayıyı al
+    const total = await Post.countDocuments(query);
+
     res.json({
       success: true,
       data: {
         posts,
-        totalPages: Math.ceil(total / parseInt(limit)),
-        currentPage: parseInt(page),
-        total,
-        popularTags: popularTags.map(tag => ({ name: tag._id, count: tag.count }))
+        pagination: {
+          currentPage: pageNumber,
+          totalPages: Math.ceil(total / limitNumber),
+          totalPosts: total,
+          hasNextPage: skip + limitNumber < total,
+          hasPrevPage: pageNumber > 1
+        },
+        filters: {
+          query: searchQuery,
+          type,
+          category,
+          difficulty
+        }
       }
     });
-    
+
   } catch (error) {
-    console.error('❌ Search posts error:', error);
+    console.error('Post arama hatası:', error);
     res.status(500).json({
       success: false,
-      error: 'Arama sırasında hata oluştu'
+      error: 'Post arama sırasında hata oluştu'
     });
   }
 };
@@ -497,6 +522,71 @@ const getPopularTags = async (req, res) => {
   }
 };
 
+// GET /api/search/tags - Etiket arama
+const searchTags = async (req, res) => {
+  try {
+    const { q, limit = 20, page = 1 } = req.query;
+    const skip = (page - 1) * limit;
+
+    if (!q || q.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Arama terimi gerekli'
+      });
+    }
+
+    const searchQuery = q.trim();
+    const pageNumber = parseInt(page);
+    const limitNumber = parseInt(limit);
+
+    // Etiket arama sorgusu
+    const tags = await Post.aggregate([
+      { $match: { isModerated: true } },
+      { $unwind: '$topicTags' },
+      { $match: { topicTags: { $regex: searchQuery, $options: 'i' } } },
+      { $group: { _id: '$topicTags', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $skip: skip },
+      { $limit: limitNumber }
+    ]);
+
+    // Toplam etiket sayısını al
+    const totalTags = await Post.aggregate([
+      { $match: { isModerated: true } },
+      { $unwind: '$topicTags' },
+      { $match: { topicTags: { $regex: searchQuery, $options: 'i' } } },
+      { $group: { _id: '$topicTags' } },
+      { $count: 'total' }
+    ]);
+
+    const total = totalTags[0]?.total || 0;
+
+    res.json({
+      success: true,
+      data: {
+        tags: tags.map(tag => ({ name: tag._id, count: tag.count })),
+        pagination: {
+          currentPage: pageNumber,
+          totalPages: Math.ceil(total / limitNumber),
+          totalTags: total,
+          hasNextPage: skip + limitNumber < total,
+          hasPrevPage: pageNumber > 1
+        },
+        filters: {
+          query: searchQuery
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Etiket arama hatası:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Etiket arama sırasında hata oluştu'
+    });
+  }
+};
+
 module.exports = {
   createPost,
   getPosts,
@@ -506,5 +596,6 @@ module.exports = {
   deletePost,
   getPostHapBilgi,
   searchPosts,
-  getPopularTags
+  getPopularTags,
+  searchTags
 }; 

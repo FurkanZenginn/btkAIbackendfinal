@@ -39,44 +39,26 @@ const retryRequest = async (requestFn, maxRetries = 5) => {
 const imageCache = new Map();
 
 const PROMPT_IMPROVEMENT_RULES = {
-  // Matematik soruları için
+  // Sadece gerçekten karmaşık sorular için
   math: {
-    keywords: ['integral', 'türev', 'denklem', 'formül', 'hesapla', 'çöz', 'matematik'],
+    keywords: ['integral', 'türev', 'denklem', 'formül', 'hesapla', 'çöz'],
     improvements: [
       'Hangi matematik konusu ile ilgili?',
-      'Hangi formülleri kullanabiliriz?',
-      'Verilen değerler neler?',
-      'İstenen sonuç nedir?'
+      'Verilen değerler neler?'
     ]
   },
-  // Fizik soruları için
   physics: {
-    keywords: ['hız', 'ivme', 'kuvvet', 'enerji', 'basınç', 'sıcaklık', 'fizik'],
+    keywords: ['hız', 'ivme', 'kuvvet', 'enerji', 'basınç', 'sıcaklık'],
     improvements: [
       'Hangi fizik konusu ile ilgili?',
-      'Verilen değerler ve birimler neler?',
-      'Hangi formülleri kullanabiliriz?',
-      'İstenen hesaplama nedir?'
+      'Verilen değerler ve birimler neler?'
     ]
   },
-  // Kimya soruları için
   chemistry: {
-    keywords: ['molekül', 'reaksiyon', 'kimyasal', 'element', 'bileşik', 'kimya'],
+    keywords: ['molekül', 'reaksiyon', 'kimyasal', 'element', 'bileşik'],
     improvements: [
       'Hangi kimya konusu ile ilgili?',
-      'Verilen kimyasal bileşikler neler?',
-      'Hangi reaksiyon türü?',
-      'İstenen analiz nedir?'
-    ]
-  },
-  // Genel sorular için
-  general: {
-    keywords: ['nasıl', 'neden', 'açıkla', 'anlat', 'öğret'],
-    improvements: [
-      'Hangi konu ile ilgili?',
-      'Hangi seviyede bilgi istiyorsun?',
-      'Hangi açıdan bakmak istiyorsun?',
-      'Özel bir durum var mı?'
+      'Verilen kimyasal bileşikler neler?'
     ]
   }
 };
@@ -84,25 +66,27 @@ const PROMPT_IMPROVEMENT_RULES = {
 function improvePromptFrontend(userPrompt) {
   let improvedPrompt = userPrompt.trim();
   
+  // Çok kısa prompt'lar için minimal iyileştirme
+  if (improvedPrompt.length < 20) {
+    improvedPrompt += '?';
+    return improvedPrompt;
+  }
+  
   // Soru işareti kontrolü
   if (!improvedPrompt.endsWith('?')) {
     improvedPrompt += '?';
   }
   
-  // Konu tespiti
+  // Sadece gerçekten karmaşık sorular için konu tespiti
   const detectedSubject = detectSubject(improvedPrompt);
   
-  // Konuya özel iyileştirmeler
-  if (detectedSubject && detectedSubject !== 'general') {
+  if (detectedSubject && detectedSubject !== 'general' && improvedPrompt.length > 100) {
     const rules = PROMPT_IMPROVEMENT_RULES[detectedSubject];
-    const relevantImprovements = rules.improvements.slice(0, 2); // İlk 2 iyileştirmeyi al
-    
-    improvedPrompt += `\n\nLütfen şunları da belirt:\n${relevantImprovements.map(imp => `- ${imp}`).join('\n')}`;
-  }
-  
-  // Genel iyileştirmeler
-  if (improvedPrompt.length < 20) {
-    improvedPrompt += '\n\nDaha detaylı açıklayabilir misin?';
+    if (rules && rules.improvements.length > 0) {
+      // Sadece 1 iyileştirme ekle
+      const relevantImprovement = rules.improvements[0];
+      improvedPrompt += `\n\nLütfen ${relevantImprovement.toLowerCase()}.`;
+    }
   }
   
   return improvedPrompt;
@@ -156,20 +140,29 @@ async function getFastAIResponse(prompt, responseType, imageURL = null) {
       throw new Error('API key not found. Please check GEMINI_API_KEY environment variable.');
     }
 
+    // Prompt analizi - basit mi karmaşık mı?
+    const isSimpleQuestion = prompt.length < 50 && 
+      !prompt.includes('?') && 
+      !prompt.includes('nasıl') && 
+      !prompt.includes('neden') &&
+      !prompt.includes('açıkla') &&
+      !prompt.includes('hesapla') &&
+      !prompt.includes('çöz') &&
+      !prompt.includes('formül');
+
+    let promptText = '';
+    
+    if (isSimpleQuestion) {
+      // Basit sorular için minimal prompt
+      promptText = `"${prompt}" - Bu konuda yardımcı olabilir misin?`;
+    } else {
+      // Karmaşık sorular için sadece net cevap iste
+      promptText = `"${prompt}" - Bu soruya net ve anlaşılır bir şekilde cevap ver.`;
+    }
+
     const parts = [
       {
-        text: `Bir öğrenci şu şekilde bir soru sordu:
-"${prompt}"
-
-Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:
-
-1. **Çözüm Adımları**: Her adımı açıkla
-2. **Formüller/Teoremler**: Kullanılan formülleri açıkla
-3. **Neden Bu Yöntem**: Neden bu yaklaşımı seçtik?
-4. **Alternatif Yöntemler**: Varsa alternatif çözüm yolları
-5. **Kontrol**: Cevabın doğruluğunu nasıl kontrol edebiliriz?
-
-Öğrencinin tam olarak anlayabilmesi için her detayı açıkla.`
+        text: promptText
       }
     ];
 
@@ -207,13 +200,16 @@ Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:
       throw new Error('Gemini API\'den geçersiz yanıt alındı.');
     }
 
-    return response.data.candidates[0].content.parts[0].text;
+    const rawResponse = response.data.candidates[0].content.parts[0].text;
+    
+    // Response'u temizle ve kullanıcı dostu hale getir
+    return cleanAIResponse(rawResponse);
 
   } catch (error) {
     console.error('Gemini API Hatası:', error.message);
     
     // Kullanıcı dostu hata mesajları
-    if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+    if (error.code === 'ECONNRESET' || error.code === 'ENOTFOUND') {
       throw new Error('AI servisine bağlanılamıyor. Lütfen internet bağlantınızı kontrol edin.');
     }
     
@@ -250,10 +246,27 @@ async function optimizePrompt(userPrompt, imageURL = null) {
       throw new Error('API key not found.');
     }
 
+    // Basit prompt'lar için sistem talimatı ekleme
+    const isSimpleQuestion = userPrompt.length < 50 && 
+      !userPrompt.includes('?') && 
+      !userPrompt.includes('nasıl') && 
+      !userPrompt.includes('neden') &&
+      !userPrompt.includes('açıkla') &&
+      !userPrompt.includes('hesapla');
+
+    let promptText = '';
+    
+    if (isSimpleQuestion) {
+      // Basit sorular için minimal prompt
+      promptText = `"${userPrompt}" - Bu konuda yardımcı olabilir misin?`;
+    } else {
+      // Karmaşık sorular için sadece konu tespiti
+      promptText = `"${userPrompt}" - Bu soruya net ve anlaşılır bir şekilde cevap ver.`;
+    }
+
     const parts = [
       {
-        text: `Aşağıdaki öğrenci sorusunu daha açıklayıcı, net ve kapsamlı hale getir:
-"${userPrompt}"`
+        text: promptText
       }
     ];
 
@@ -362,11 +375,49 @@ async function getMentorResponse(prompt, imageURL = null) {
   return await getFastAIResponse(prompt, 'direct', imageURL);
 }
 
+// AI response'larını temizle ve kullanıcı dostu hale getir
+function cleanAIResponse(response) {
+  if (!response || typeof response !== 'string') {
+    return response;
+  }
+  
+  let cleanedResponse = response;
+  
+  // Sistem talimatlarını kaldır
+  const systemInstructions = [
+    'Bu soruya DETAYLI VE AÇIKLAYICI bir şekilde cevap ver:',
+    '1. **Çözüm Adımları**:',
+    '2. **Formüller/Teoremler**:',
+    '3. **Neden Bu Yöntem**:',
+    '4. **Alternatif Yöntemler**:',
+    '5. **Kontrol**:',
+    'Öğrencinin tam olarak anlayabilmesi için her detayı açıkla.',
+    'Lütfen şunları da belirt:',
+    'Bu konuda yardımcı olabilir misin?'
+  ];
+  
+  systemInstructions.forEach(instruction => {
+    cleanedResponse = cleanedResponse.replace(instruction, '');
+  });
+  
+  // Fazla boşlukları temizle
+  cleanedResponse = cleanedResponse.replace(/\n\s*\n\s*\n/g, '\n\n');
+  cleanedResponse = cleanedResponse.trim();
+  
+  // Eğer response çok kısaysa, orijinal response'u döndür
+  if (cleanedResponse.length < 10) {
+    return response;
+  }
+  
+  return cleanedResponse;
+}
+
 module.exports = {
   optimizePrompt,
   getMentorResponse,
   analyzeImage,
   getFastAIResponse,
   improvePromptFrontend,
+  cleanAIResponse,
   PROMPT_IMPROVEMENT_RULES
 };
